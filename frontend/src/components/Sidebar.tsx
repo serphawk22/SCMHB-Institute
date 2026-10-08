@@ -372,14 +372,18 @@ export function Sidebar({ role }: SidebarProps) {
       if (res.ok) {
         const data = await res.json();
         if (data.ok && data.sidebar_preferences) {
-          if (data.sidebar_preferences.sections) {
-            const savedSections = data.sidebar_preferences.sections;
+          if (Array.isArray(data.sidebar_preferences.sections)) {
+            const savedSections = data.sidebar_preferences.sections.filter((section: any) =>
+              section && typeof section === "object" && typeof section.id === "string"
+            );
             const savedSectionIds = new Set(savedSections.map((s: any) => s.id));
             const missingSections = defaultSidebarSections.filter(s => !savedSectionIds.has(s.id));
             
             // Deep merge: update existing items with latest roles/icons and add missing items
             const mergedSections = savedSections.map((savedSec: any) => {
-              const updatedSavedItems = savedSec.items.map((savedItem: any) => {
+              const savedItems = Array.isArray(savedSec.items) ? savedSec.items : [];
+              const updatedSavedItems = savedItems.map((savedItem: any) => {
+                if (!savedItem || typeof savedItem !== "object") return null;
                 let defaultItemRef = null;
                 for (const ds of defaultSidebarSections) {
                   const found = ds.items.find(i => i.id === savedItem.id);

@@ -11,7 +11,16 @@ export default function InstituteAnalyticsPage() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(()=>{ fetch(`${API_BASE_URL}/institute/analytics`).then(r=>r.json()).then(d=>setData(d)).catch(()=>{}).finally(()=>setLoading(false)); },[]);
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/institute/analytics`)
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.detail || "Could not load analytics.");
+        setData(payload);
+      })
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, []);
 
   if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-10 h-10 animate-spin text-violet-400" /></div>;
   if (!data) return <div className="text-center text-zinc-500 py-20">Failed to load analytics</div>;
@@ -28,11 +37,11 @@ export default function InstituteAnalyticsPage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-3xl font-bold text-white flex items-center gap-3">
+        <h1 className="text-3xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center"><BarChart2 className="w-5 h-5 text-white" /></div>
           Institute Analytics
         </h1>
-        <p className="text-zinc-400 mt-1">Comprehensive overview of institute performance</p>
+        <p className="text-slate-500 dark:text-zinc-400 mt-1">Comprehensive overview of institute performance</p>
       </div>
 
       {/* KPI Cards */}
@@ -44,7 +53,7 @@ export default function InstituteAnalyticsPage() {
               <p className="text-zinc-400 text-sm">{k.label}</p>
               <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${k.color} flex items-center justify-center`}><k.icon className="w-4 h-4 text-white" /></div>
             </div>
-            <p className="text-3xl font-bold text-white mb-1">{k.value}</p>
+            <p className="text-3xl font-bold text-slate-900 dark:text-white mb-1">{k.value}</p>
             <p className="text-xs text-zinc-500">{k.sub}</p>
           </motion.div>
         ))}
@@ -53,7 +62,7 @@ export default function InstituteAnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Monthly Revenue */}
         <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{delay:0.3}} className="glass-card rounded-2xl p-6 border border-white/10">
-          <h2 className="text-white font-semibold text-lg mb-4 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-violet-400" />Monthly Revenue Trend</h2>
+          <h2 className="text-slate-900 dark:text-white font-semibold text-lg mb-4 flex items-center gap-2"><TrendingUp className="w-5 h-5 text-violet-500" />Monthly Revenue Trend</h2>
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={data.monthly_revenue||[]}>
               <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" />
@@ -69,7 +78,7 @@ export default function InstituteAnalyticsPage() {
 
         {/* Revenue by Course */}
         <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{delay:0.35}} className="glass-card rounded-2xl p-6 border border-white/10">
-          <h2 className="text-white font-semibold text-lg mb-4 flex items-center gap-2"><BookOpen className="w-5 h-5 text-amber-400" />Revenue by Course</h2>
+          <h2 className="text-slate-900 dark:text-white font-semibold text-lg mb-4 flex items-center gap-2"><BookOpen className="w-5 h-5 text-amber-500" />Revenue by Course</h2>
           {(data.revenue_by_course||[]).length === 0 ? (
             <div className="flex items-center justify-center h-56 text-zinc-500"><p>No data yet</p></div>
           ) : (
@@ -89,14 +98,14 @@ export default function InstituteAnalyticsPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Instructor Performance */}
         <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{delay:0.4}} className="glass-card rounded-2xl p-6 border border-white/10">
-          <h2 className="text-white font-semibold text-lg mb-4 flex items-center gap-2"><UserCog className="w-5 h-5 text-amber-400" />Instructor Performance</h2>
+          <h2 className="text-slate-900 dark:text-white font-semibold text-lg mb-4 flex items-center gap-2"><UserCog className="w-5 h-5 text-amber-500" />Instructor Performance</h2>
           <div className="space-y-3">
             {(data.instructor_stats||[]).length===0 ? <p className="text-zinc-500 text-center py-8">No instructors yet</p> :
             (data.instructor_stats||[]).map((ins: any, i: number)=>(
               <div key={ins.id} className="flex items-center gap-4 p-3 bg-white/5 rounded-xl">
                 <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white font-bold text-sm">{ins.name[0]}</div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-medium text-sm truncate">{ins.name}</p>
+                  <p className="text-slate-900 dark:text-white font-medium text-sm truncate">{ins.name}</p>
                   <p className="text-zinc-500 text-xs">{ins.batches} batches · {ins.students} students</p>
                 </div>
                 <div className="text-right">
@@ -109,14 +118,14 @@ export default function InstituteAnalyticsPage() {
 
         {/* Sales Performance */}
         <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{delay:0.45}} className="glass-card rounded-2xl p-6 border border-white/10">
-          <h2 className="text-white font-semibold text-lg mb-4 flex items-center gap-2"><Target className="w-5 h-5 text-green-400" />Sales Team Performance</h2>
+          <h2 className="text-slate-900 dark:text-white font-semibold text-lg mb-4 flex items-center gap-2"><Target className="w-5 h-5 text-green-500" />Sales Team Performance</h2>
           <div className="space-y-3">
             {(data.sales_stats||[]).length===0 ? <p className="text-zinc-500 text-center py-8">No sales data yet</p> :
             (data.sales_stats||[]).map((s: any, i: number)=>(
               <div key={s.user_id} className="flex items-center gap-4 p-3 bg-white/5 rounded-xl">
                 <div className="w-9 h-9 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center text-white font-bold text-sm">{(s.name||"?")[0]}</div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-white font-medium text-sm truncate">{s.name||"Unknown"}</p>
+                  <p className="text-slate-900 dark:text-white font-medium text-sm truncate">{s.name||"Unknown"}</p>
                   <p className="text-zinc-500 text-xs">{s.leads_assigned} leads · {s.leads_converted} converted</p>
                 </div>
                 <div className="text-right">

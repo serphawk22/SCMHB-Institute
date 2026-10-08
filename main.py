@@ -17754,6 +17754,15 @@ def _create_institute_tables():
             if table in inspector.get_table_names() and column not in {item["name"] for item in inspector.get_columns(table)}:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
 
+        # Tables created before tenant support are still used by the dashboard and
+        # analytics endpoints.  Do not rely on the one-time global migration marker:
+        # a restored database can legitimately be missing these columns.
+        for model in tables_to_create:
+            table = model.__tablename__
+            columns = {item["name"] for item in inspector.get_columns(table)}
+            if "tenant_id" in model.__table__.columns and "tenant_id" not in columns:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)"))
+
 try:
     _create_institute_tables()
 except Exception as e:
@@ -19879,8 +19888,8 @@ def get_instructor_teaching(session: Session = Depends(get_session)):
 def get_institute_analytics(session: Session = Depends(get_session)):
     # Revenue
     enrollments = session.exec(select(Enrollment)).all()
-    total_revenue = sum(e.amount_paid for e in enrollments)
-    total_due = sum(e.amount_due for e in enrollments)
+    total_revenue = sum(float(e.amount_paid or 0) for e in enrollments)
+    total_due = sum(float(e.amount_due or 0) for e in enrollments)
     total_enrollments = len(enrollments)
     active_enrollments = len([e for e in enrollments if e.status == "Active"])
 
@@ -19904,7 +19913,7 @@ def get_institute_analytics(session: Session = Depends(get_session)):
     courses = session.exec(select(Course)).all()
     for c in courses:
         course_enrollments = [e for e in enrollments if e.course_id == c.id]
-        rev = sum(e.amount_paid for e in course_enrollments)
+        rev = sum(float(e.amount_paid or 0) for e in course_enrollments)
         if rev > 0:
             revenue_by_course.append({"course": c.title, "revenue": rev, "students": len(course_enrollments)})
     revenue_by_course.sort(key=lambda x: x["revenue"], reverse=True)
@@ -19915,10 +19924,10 @@ def get_institute_analytics(session: Session = Depends(get_session)):
     for i in range(5, -1, -1):
         month_start = datetime.utcnow().replace(day=1) - timedelta(days=30*i)
         month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
-        month_enrollments = [e for e in enrollments if month_start <= e.enrollment_date < month_end]
+        month_enrollments = [e for e in enrollments if e.enrollment_date and month_start <= e.enrollment_date < month_end]
         monthly_revenue.append({
             "month": month_start.strftime("%b %Y"),
-            "revenue": sum(e.amount_paid for e in month_enrollments),
+            "revenue": sum(float(e.amount_paid or 0) for e in month_enrollments),
             "enrollments": len(month_enrollments)
         })
 
