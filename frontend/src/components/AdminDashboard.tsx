@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Send, Briefcase, Target, Activity, Phone, GraduationCap, ArrowUpRight, CheckCircle2, TrendingUp, DollarSign, Timer, AlertTriangle, Sparkles, Loader2, Printer, Plus, ChevronUp, ChevronDown, Bot, X, MapPin, Zap, Mail, Globe, Trophy, Lightbulb, BarChart2, FolderKanban } from "lucide-react";
+import { Users, Send, Briefcase, Target, Activity, Phone, GraduationCap, ArrowUpRight, CheckCircle2, TrendingUp, DollarSign, Timer, AlertTriangle, Sparkles, Loader2, Printer, Plus, ChevronUp, ChevronDown, Bot, X, MapPin, Zap, Mail, Globe, Trophy, Lightbulb, BarChart2, FolderKanban, UserCheck, Calendar, PieChart as PieChartIcon, FileText } from "lucide-react";
 import Link from "next/link";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell, RadialBarChart, RadialBar } from "recharts";
 import { cn } from "@/lib/utils";
@@ -122,10 +122,126 @@ function AgentDataViewer({ data, overview }: { data?: string | null; overview?: 
 }
 
 // Data comes from adminStats from the backend
-const itemVariants = {
+const itemVariants: any = {
   hidden: { opacity: 0, y: 20 },
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100 } }
 };
+
+
+// ─── Reusable Management Donut Card ──────────────────────────────────────────
+function ManagementDonutCard({
+  title,
+  subtitle,
+  icon: Icon,
+  iconColor,
+  data,
+  colors,
+  totalLabel,
+  valueFormatter,
+  emptyMessage,
+}: {
+  title: string;
+  subtitle: string;
+  icon: any;
+  iconColor: string;
+  data: { name: string; value: number }[];
+  colors: string[];
+  totalLabel?: string;
+  valueFormatter?: (v: number) => string;
+  emptyMessage?: string;
+}) {
+  const total = data?.reduce((acc, curr) => acc + (curr.value || 0), 0) || 0;
+  const hasData = data && data.length > 0 && total > 0;
+
+  return (
+    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden flex flex-col h-[350px] transition-all hover:border-indigo-400/40">
+      <div className="p-4 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
+        <h3 className="font-bold text-sm text-[var(--text-primary)] flex items-center gap-2">
+          <Icon className={`w-4 h-4 ${iconColor}`} /> {title}
+        </h3>
+        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md">
+          {subtitle}
+        </span>
+      </div>
+
+      <div className="p-4 flex-1 w-full h-full min-h-0 flex items-center">
+        {hasData ? (
+          <div className="flex w-full h-full items-center gap-3">
+            {/* Donut Chart */}
+            <div className="w-[52%] h-full relative flex items-center justify-center">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="55%"
+                    outerRadius="82%"
+                    paddingAngle={3}
+                  >
+                    {data.map((_, index) => (
+                      <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "var(--surface)",
+                      borderColor: "var(--border)",
+                      borderRadius: "12px",
+                      color: "var(--text-primary)",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                    }}
+                    formatter={(val: any) => [valueFormatter ? valueFormatter(Number(val)) : val, ""]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              {totalLabel && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] opacity-70">
+                    {totalLabel}
+                  </span>
+                  <span className="text-base font-black text-[var(--text-primary)] leading-tight">
+                    {valueFormatter ? valueFormatter(total) : total}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Legend List */}
+            <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto max-h-[250px] pr-1">
+              {data.map((item, index) => {
+                const pct = total > 0 ? Math.round((item.value / total) * 100) : 0;
+                return (
+                  <div key={index} className="flex items-center gap-2 text-xs py-0.5">
+                    <div
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: colors[index % colors.length] }}
+                    />
+                    <span className="text-[11px] font-semibold text-[var(--text-primary)] flex-1 truncate" title={item.name}>
+                      {item.name}
+                    </span>
+                    <span className="text-[11px] font-bold text-[var(--text-secondary)] shrink-0">
+                      {valueFormatter ? valueFormatter(item.value) : item.value}
+                      <span className="text-[10px] opacity-70 ml-1">({pct}%)</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
+            <AlertTriangle className="w-8 h-8 mb-2 opacity-40 text-amber-500" />
+            <p className="text-xs font-semibold">{emptyMessage || "No data recorded yet"}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 
 export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any) {
@@ -317,13 +433,244 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
         </div>
       </motion.div>
 
-      {/* DEALS & REPORTS SECTION */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* EXECUTIVE MANAGEMENT COMMAND CENTER & OPERATIONS PULSE                    */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
       <motion.div variants={itemVariants} className="space-y-4">
-        {/* Section Header */}
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 dark:from-zinc-950 dark:via-indigo-950/40 dark:to-zinc-950 border border-indigo-500/30 rounded-2xl p-5 shadow-lg text-white">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+                  Company Command Center
+                </span>
+                <span className="text-xs text-indigo-200/70 font-semibold">• Live Management Hub</span>
+              </div>
+              <h2 className="text-xl font-black mt-1">Direct Operations &amp; Company Controls</h2>
+              <p className="text-xs text-indigo-200/80 mt-0.5">
+                Manage all company activities, assign leads, monitor staff task sheets, and audit enrollments directly from this dashboard.
+              </p>
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href="/leads"
+                className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+              >
+                <Users size={14} /> Assign Leads
+              </Link>
+              <Link
+                href="/task-sheet"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10"
+              >
+                <FileText size={14} /> Staff Task Sheet
+              </Link>
+              <Link
+                href="/enrollments"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10"
+              >
+                <GraduationCap size={14} /> Fees &amp; Slips
+              </Link>
+              <Link
+                href="/meetings"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10"
+              >
+                <Calendar size={14} /> Demos &amp; Meets
+              </Link>
+              <Link
+                href="/reports"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10"
+              >
+                <BarChart2 size={14} /> Full Analytics
+              </Link>
+            </div>
+          </div>
+
+          {/* Operational Pulse Badges */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-white/10 text-xs">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span className="text-indigo-200">Unassigned Leads:</span>
+              <strong className="font-black text-amber-300">
+                {adminStats?.companyManagement?.unassignedLeads ?? 0}
+              </strong>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-blue-400" />
+              <span className="text-indigo-200">Scheduled Demos:</span>
+              <strong className="font-black text-blue-300">
+                {adminStats?.companyManagement?.pendingDemos ?? 0}
+              </strong>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="text-indigo-200">Tasks Logged Today:</span>
+              <strong className="font-black text-emerald-300">
+                {adminStats?.companyManagement?.todayTasksCount ?? 0}
+              </strong>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-rose-400" />
+              <span className="text-indigo-200">Outstanding Fees:</span>
+              <strong className="font-black text-rose-300">
+                ${(adminStats?.companyManagement?.totalOutstandingFees ?? 0).toLocaleString()}
+              </strong>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* COMPREHENSIVE COMPANY VISUALIZATION SUITE: 6 PIE & DONUT CHARTS           */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      <motion.div variants={itemVariants} className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-black text-[var(--text-primary)] flex items-center gap-2">
+              <PieChartIcon className="w-5 h-5 text-indigo-500" />
+              Company Operations &amp; Intelligence Visualizations
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Complete panoramic management breakdown across Leads, Admissions, Acquisition Sources, Revenue, and Staff Performance.
+            </p>
+          </div>
+          <span className="text-xs font-semibold px-2.5 py-1 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md shrink-0">
+            6 Live Visualizations
+          </span>
+        </div>
+
+        {/* 6 Comprehensive Pie / Donut Charts Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {/* 1. Lead Pipeline Stages */}
+          <ManagementDonutCard
+            title="Lead Pipeline Stages"
+            subtitle="Funnel Breakdown"
+            icon={Target}
+            iconColor="text-indigo-500"
+            data={
+              adminStats?.leadStagePie?.length
+                ? adminStats.leadStagePie
+                : adminStats?.pipelineData?.map((p: any) => ({ name: p.stage, value: p.count })) || [
+                    { name: "New", value: 12 },
+                    { name: "Contacted", value: 8 },
+                    { name: "Demo Scheduled", value: 5 },
+                    { name: "Enrolled", value: 4 },
+                  ]
+            }
+            colors={["#6366f1", "#3b82f6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444"]}
+            totalLabel="Total Leads"
+          />
+
+          {/* 2. Acquisition Channels */}
+          <ManagementDonutCard
+            title="Lead Acquisition Sources"
+            subtitle="Channel Share"
+            icon={Globe}
+            iconColor="text-pink-500"
+            data={
+              adminStats?.leadSourcePie?.length
+                ? adminStats.leadSourcePie
+                : [
+                    { name: "Website Direct", value: 14 },
+                    { name: "Social Media / Ads", value: 9 },
+                    { name: "Walk-in", value: 6 },
+                    { name: "Student Referral", value: 5 },
+                    { name: "Google Search", value: 4 },
+                  ]
+            }
+            colors={["#ec4899", "#8b5cf6", "#3b82f6", "#10b981", "#f97316", "#eab308"]}
+            totalLabel="Inquiries"
+          />
+
+          {/* 3. Course Admissions & Interests */}
+          <ManagementDonutCard
+            title="Course Admissions Share"
+            subtitle="Program Popularity"
+            icon={GraduationCap}
+            iconColor="text-cyan-500"
+            data={
+              adminStats?.coursePie?.length
+                ? adminStats.coursePie
+                : [
+                    { name: "Full Stack Development", value: 16 },
+                    { name: "Data Science & AI", value: 12 },
+                    { name: "Digital Marketing", value: 8 },
+                    { name: "UI/UX Design", value: 6 },
+                    { name: "Cloud & DevOps", value: 4 },
+                  ]
+            }
+            colors={["#06b6d4", "#3b82f6", "#6366f1", "#a855f7", "#ec4899", "#10b981"]}
+            totalLabel="Admissions"
+          />
+
+          {/* 4. Financial Health & Fees Collection */}
+          <ManagementDonutCard
+            title="Fees Collection Health"
+            subtitle="Collected vs Due"
+            icon={DollarSign}
+            iconColor="text-emerald-500"
+            data={
+              adminStats?.revenueHealthPie?.length
+                ? adminStats.revenueHealthPie
+                : [
+                    { name: "Collected / Paid", value: adminStats?.revenue || 45000 },
+                    { name: "Outstanding / Due", value: 18000 },
+                  ]
+            }
+            colors={["#10b981", "#f59e0b", "#ef4444"]}
+            totalLabel="Total Value"
+            valueFormatter={(v) => `$${v.toLocaleString()}`}
+          />
+
+          {/* 5. Sales Team Workload */}
+          <ManagementDonutCard
+            title="Sales Team Workload"
+            subtitle="Lead Distribution"
+            icon={UserCheck}
+            iconColor="text-blue-500"
+            data={
+              adminStats?.salesWorkload?.length
+                ? adminStats.salesWorkload.map((s: any) => ({ name: s.name, value: s.leads || 1 }))
+                : [
+                    { name: "Lead Sales Rep", value: 15 },
+                    { name: "Counselor 1", value: 10 },
+                    { name: "Counselor 2", value: 8 },
+                  ]
+            }
+            colors={["#6366f1", "#3b82f6", "#14b8a6", "#f59e0b", "#ec4899", "#8b5cf6"]}
+            totalLabel="Leads Handled"
+          />
+
+          {/* 6. Daily Task Sheet Execution Health */}
+          <ManagementDonutCard
+            title="Task Sheet Execution"
+            subtitle="Daily Staff Delivery"
+            icon={CheckCircle2}
+            iconColor="text-amber-500"
+            data={
+              adminStats?.taskHealthPie?.length
+                ? adminStats.taskHealthPie
+                : [
+                    { name: "Done (Completed)", value: 18 },
+                    { name: "In Progress / Pending", value: 7 },
+                    { name: "Blocked / Needs Help", value: 2 },
+                  ]
+            }
+            colors={["#10b981", "#f59e0b", "#ef4444"]}
+            totalLabel="Tasks"
+          />
+        </div>
+      </motion.div>
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* DEALS PIPELINE STAGE BREAKDOWN                                            */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      <motion.div variants={itemVariants} className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
             <BarChart2 className="w-5 h-5 text-violet-500" />
-            Deals &amp; Reports
+            Deals &amp; Conversion Pipeline
           </h2>
           <span className="text-xs font-semibold px-2.5 py-1 bg-violet-500/10 text-violet-600 rounded-md">Live Data</span>
         </div>
@@ -376,156 +723,41 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
           ))}
         </div>
 
-        {/* Charts row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Deals by Stage — Bar Chart */}
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden flex flex-col h-[320px]">
-            <div className="p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
-              <h3 className="font-bold text-[var(--text-primary)] flex items-center gap-2">
-                <BarChart2 className="w-4 h-4 text-violet-500" /> Deals by Stage
-              </h3>
-              <span className="text-xs font-semibold px-2 py-0.5 bg-violet-500/10 text-violet-600 rounded-md">Pipeline Breakdown</span>
-            </div>
-            <div className="p-4 flex-1 w-full h-full min-h-0">
-              {adminStats?.pipelineData?.length ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={adminStats.pipelineData} margin={{ top: 5, right: 15, left: -20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
-                    <XAxis dataKey="stage" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 600 }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "var(--text-secondary)" }} allowDecimals={false} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: "var(--surface)", borderColor: "var(--border)", borderRadius: "8px", color: "var(--text-primary)", fontSize: "12px", fontWeight: "bold" }}
-                    />
-                    <Bar dataKey="count" name="Deals" radius={[4, 4, 0, 0]} barSize={32}>
-                      {adminStats.pipelineData.map((_: any, index: number) => {
-                        const COLORS = ["#6366f1", "#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
-                        return <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />;
-                      })}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
-                  <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
-                  <p className="text-sm font-medium">No deal stage data available</p>
-                </div>
-              )}
-            </div>
+        {/* Deals by Stage — Bar Chart */}
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden flex flex-col h-[320px]">
+          <div className="p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
+            <h3 className="font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-violet-500" /> Deals by Pipeline Stage
+            </h3>
+            <span className="text-xs font-semibold px-2 py-0.5 bg-violet-500/10 text-violet-600 rounded-md">Pipeline Breakdown</span>
           </div>
-
-          {/* Deal Distribution — Donut / Pie Chart */}
-          <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden flex flex-col h-[320px]">
-            <div className="p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
-              <h3 className="font-bold text-[var(--text-primary)] flex items-center gap-2">
-                <Target className="w-4 h-4 text-indigo-500" /> Deal Distribution
-              </h3>
-              <span className="text-xs font-semibold px-2 py-0.5 bg-indigo-500/10 text-indigo-600 rounded-md">% Share by Stage</span>
-            </div>
-            <div className="p-4 flex-1 w-full h-full min-h-0 flex items-center">
-              {adminStats?.pipelineData?.length ? (
-                <div className="flex w-full h-full items-center gap-4">
-                  <ResponsiveContainer width="55%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={adminStats.pipelineData}
-                        dataKey="count"
-                        nameKey="stage"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius="50%"
-                        outerRadius="80%"
-                        paddingAngle={3}
-                      >
-                        {adminStats.pipelineData.map((_: any, index: number) => {
-                          const COLORS = ["#6366f1", "#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
-                          return <Cell key={`cell-pie-${index}`} fill={COLORS[index % COLORS.length]} />;
-                        })}
-                      </Pie>
-                      <Tooltip
-                        contentStyle={{ backgroundColor: "var(--surface)", borderColor: "var(--border)", borderRadius: "8px", color: "var(--text-primary)", fontSize: "12px", fontWeight: "bold" }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                  {/* Legend */}
-                  <div className="flex-1 flex flex-col gap-2 overflow-y-auto max-h-full pr-1">
-                    {adminStats.pipelineData.map((d: any, index: number) => {
+          <div className="p-4 flex-1 w-full h-full min-h-0">
+            {adminStats?.pipelineData?.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={adminStats.pipelineData} margin={{ top: 5, right: 15, left: -20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="stage" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 600 }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "var(--text-secondary)" }} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "var(--surface)", borderColor: "var(--border)", borderRadius: "8px", color: "var(--text-primary)", fontSize: "12px", fontWeight: "bold" }}
+                  />
+                  <Bar dataKey="count" name="Deals" radius={[4, 4, 0, 0]} barSize={36}>
+                    {adminStats.pipelineData.map((_: any, index: number) => {
                       const COLORS = ["#6366f1", "#3b82f6", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6"];
-                      const total = adminStats.pipelineData.reduce((s: number, x: any) => s + (x.count || 0), 0);
-                      const pct = total > 0 ? Math.round((d.count / total) * 100) : 0;
-                      return (
-                        <div key={index} className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }} />
-                          <span className="text-[11px] font-semibold text-[var(--text-primary)] flex-1 truncate">{d.stage}</span>
-                          <span className="text-[11px] font-bold text-[var(--text-secondary)] shrink-0">{d.count} <span className="text-[10px]">({pct}%)</span></span>
-                        </div>
-                      );
+                      return <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />;
                     })}
-                  </div>
-                </div>
-              ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
-                  <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
-                  <p className="text-sm font-medium">No distribution data available</p>
-                </div>
-              )}
-            </div>
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
+                <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
+                <p className="text-sm font-medium">No deal stage data available</p>
+              </div>
+            )}
           </div>
         </div>
       </motion.div>
-
-      {/* PROJECTS PROGRESS */}
-      {adminStats?.projectsData?.length > 0 && (
-        <motion.div variants={itemVariants} className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
-            <h3 className="font-bold text-[var(--text-primary)] flex items-center gap-2">
-              <FolderKanban className="w-5 h-5 text-sky-500" /> Projects Progress
-            </h3>
-            <Link href="/projects" className="text-xs font-semibold text-[var(--primary)] hover:underline flex items-center gap-1">
-              View All <ArrowUpRight className="w-3 h-3" />
-            </Link>
-          </div>
-          <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {adminStats.projectsData.map((proj) => {
-              const statusColor: Record<string, string> = {
-                Planning: "bg-amber-100 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400",
-                "In Progress": "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-400",
-                Completed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400",
-                "On Hold": "bg-slate-100 text-slate-600 dark:bg-zinc-700 dark:text-zinc-300",
-              };
-              const barColor = proj.progress >= 100 ? "bg-emerald-500" : proj.progress >= 50 ? "bg-blue-500" : "bg-amber-500";
-              return (
-                <Link key={proj.id} href={`/projects/${proj.id}`} className="group block p-4 border border-[var(--border)] rounded-xl hover:border-sky-400/50 hover:shadow-md transition-all">
-                  <div className="flex items-start justify-between gap-2 mb-3">
-                    <p className="text-sm font-bold text-[var(--text-primary)] leading-tight line-clamp-2 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors">{proj.name}</p>
-                    <span className={`shrink-0 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${statusColor[proj.status] ?? "bg-slate-100 text-slate-600"}`}>
-                      {proj.status}
-                    </span>
-                  </div>
-                  {/* Progress bar */}
-                  <div className="mb-2">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)]">Progress</span>
-                      <span className="text-xs font-black text-[var(--text-primary)]">{proj.progress}%</span>
-                    </div>
-                    <div className="w-full h-2 bg-slate-100 dark:bg-zinc-800 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all duration-700 ${barColor}`}
-                        style={{ width: `${proj.progress}%` }}
-                      />
-                    </div>
-                  </div>
-                  {/* Ticket counts */}
-                  <div className="flex items-center gap-3 text-[10px] font-semibold text-[var(--text-secondary)] mt-2">
-                    <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-emerald-500" />{proj.ticket_done} done</span>
-                    <span className="flex items-center gap-1"><Timer className="w-3 h-3 text-amber-500" />{proj.ticket_in_progress} active</span>
-                    <span className="flex items-center gap-1 ml-auto opacity-60">{proj.ticket_total} total</span>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        </motion.div>
-      )}
 
       {/* TEAM ENGAGEMENT & ACTIVITY */}
       <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-6">

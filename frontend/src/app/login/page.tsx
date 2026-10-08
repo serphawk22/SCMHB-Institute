@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useGoogleLogin } from "@react-oauth/google";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
@@ -17,6 +18,7 @@ export default function LoginPage() {
   const [googleSubmitting, setGoogleSubmitting] = useState(false);
   const [mounted, setMounted] = useState(false);
   const { login } = useRole();
+  const router = useRouter();
 
   useEffect(() => {
     setMounted(true);
@@ -41,12 +43,12 @@ export default function LoginPage() {
         localStorage.setItem("crm_user", JSON.stringify(data.user));
         
         if (data.is_new_user) {
-          window.location.href = "/onboarding";
+          router.replace("/onboarding");
         } else {
-          window.location.href = "/";
+          router.replace("/");
         }
-      } catch (err: any) {
-        setError(err.message || "An error occurred with Google Login.");
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "An error occurred with Google Login.");
       } finally {
         setGoogleSubmitting(false);
       }
@@ -65,16 +67,12 @@ export default function LoginPage() {
       const result = await login(email, password);
       
       if (result.success) {
-        if (result.is_new_user) {
-          window.location.href = "/onboarding";
-        } else {
-          window.location.href = "/";
-        }
+        router.replace("/");
       } else {
-        setError(result.error || "Login failed");
+        setError(result.message || "Login failed");
       }
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An unexpected error occurred.");
     } finally {
       setIsSubmitting(false);
     }

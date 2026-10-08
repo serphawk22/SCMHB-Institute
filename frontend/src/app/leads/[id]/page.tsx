@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Activity, MessageSquare, StickyNote, CheckSquare, Building2, ChevronDown,
   Target, FolderOpen, HeartPulse, LayoutDashboard, Users,
-  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, DollarSign, Zap, Star, Mail, Clock, Ticket, Globe, Navigation, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar
+  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, DollarSign, Zap, Star, Mail, Clock, Ticket, Globe, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar, Sparkles
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -15,6 +15,9 @@ import { ResultCard } from '@/components/email-agent/ResultCard';
 import { API_BASE_URL } from '@/config';
 import { useRole } from '@/context/RoleContext';
 import { useLanguage } from '@/context/LanguageContext';
+import BackgroundDetailsEditor from '@/components/BackgroundDetailsEditor';
+import LeadDemoTracker from './components/LeadDemoTracker';
+import LeadFollowUpScheduler from './components/LeadFollowUpScheduler';
 
 import LeadHeader from './components/LeadHeader';
 import LeadSidebarPanel from './components/LeadSidebarPanel';
@@ -24,13 +27,11 @@ import ConversationsTab from './components/tabs/ConversationsTab';
 import NotesTab from './components/tabs/NotesTab';
 import TasksTab from './components/tabs/TasksTab';
 import FilesTab from './components/tabs/FilesTab';
-import AiDataTab from '@/app/admin/clients/[id]/components/tabs/AiDataTab';
 
 // ─── Tab definitions ───────────────────────────────────────────────────────────
 const TABS = [
   { key: 'overview',       label: 'Overview',       icon: LayoutDashboard },
   { key: 'timeline',       label: 'Timeline',        icon: Activity        },
-  { key: 'ai_data',        label: 'AI DATA',         icon: Brain           },
   { key: 'files',          label: 'Files',           icon: FolderOpen      },
   { key: 'conversations',  label: 'Conversations',   icon: MessageSquare   },
 ];
@@ -96,7 +97,7 @@ function CollapsibleSection({ title, icon: Icon, count, defaultOpen = false, acc
 }
 
 // ─── Overview Tab — premium light ──────────────────────────────────────────
-function OverviewTab({ lead, employees, serviceRequests, activities, timeline, research, notes, conversations, leadId, onNotesRefresh, onConversationsRefresh, emails, handleGenerateAnalysis, isGeneratingResearch, onRefresh }: any) {
+function OverviewTab({ lead, employees, serviceRequests, activities, timeline, research, notes, conversations, leadId, onNotesRefresh, onConversationsRefresh, emails, handleGenerateAnalysis, isGeneratingResearch, onRefresh, setSelectedActivity }: any) {
   const { t, language } = useLanguage();
   const recentActivities = (activities || []).slice(0, 8);
 
@@ -164,6 +165,10 @@ function OverviewTab({ lead, employees, serviceRequests, activities, timeline, r
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 14, background: 'var(--bg-secondary)', minHeight: '100%' }}>
+
+      <BackgroundDetailsEditor resource="leads" profileId={leadId} details={lead?.background_details} />
+      <LeadDemoTracker leadId={leadId} />
+      <LeadFollowUpScheduler leadId={leadId} leadName={lead?.company_name || lead?.first_name || 'Lead'} />
 
       {/* Company Overview */}
       {research?.company_overview && (
@@ -459,151 +464,9 @@ function OverviewTab({ lead, employees, serviceRequests, activities, timeline, r
 
 
 
-      {/* SWOT Section */}
-      <CollapsibleSection title="SWOT Analysis" icon={Radar} accentColor="#f97316" defaultOpen={true}>
-        <div style={{ paddingTop: 16 }}>
-          <LeadSwotTab lead={lead} onRefresh={onRefresh} />
-        </div>
-      </CollapsibleSection>
     </div>
   );
 }
-
-// ─── SWOT TAB ────────────────────────────────────────────────────────────────
-function LeadSwotTab({ lead, onRefresh }: { lead: any, onRefresh: () => void }) {
-  const [isSwotLoading, setIsSwotLoading] = useState(false);
-
-  const handleGenerateSwot = async () => {
-    setIsSwotLoading(true);
-    try {
-      const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/swot`, { method: 'POST' });
-      if (res.ok) {
-        onRefresh();
-      } else {
-        const err = await res.json();
-        alert(`Failed to generate SWOT: ${err.detail || 'Unknown error'}`);
-      }
-    } catch (err) {
-      console.error(err);
-      alert('Error connecting to AI');
-    } finally {
-      setIsSwotLoading(false);
-    }
-  };
-
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="pb-4">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="h-1 w-12 bg-gradient-to-r from-orange-400 to-red-500 rounded-full"></div>
-          <h2 className="text-xl font-black text-slate-800 dark:text-zinc-100 uppercase tracking-wider">SWOT Analysis</h2>
-        </div>
-        {lead.swot_analysis && (
-          <button
-            onClick={handleGenerateSwot}
-            disabled={isSwotLoading}
-            className="flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-red-500/30 transition-all disabled:opacity-50"
-          >
-            {isSwotLoading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-            {isSwotLoading ? 'Analyzing...' : 'Refresh SWOT'}
-          </button>
-        )}
-      </div>
-
-      {lead.swot_analysis ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {(() => {
-            let swot = null;
-            try {
-              swot = JSON.parse(lead.swot_analysis);
-            } catch (e) {}
-
-            if (!swot) return <div className="col-span-2 text-slate-500 italic p-6 bg-slate-50 rounded-2xl">Invalid SWOT data. Please regenerate.</div>;
-
-            return (
-              <>
-                <div className="col-span-1 md:col-span-2 p-6 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-3xl shadow-sm">
-                  <p className="text-sm font-medium text-slate-700 dark:text-zinc-300 leading-relaxed text-center">
-                    {swot.summary}
-                  </p>
-                </div>
-
-                <div className="p-6 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800 rounded-3xl">
-                  <h3 className="text-lg font-black text-emerald-800 dark:text-emerald-400 mb-4 flex items-center gap-2">
-                    <TrendingUp size={20} /> Strengths
-                  </h3>
-                  <ul className="space-y-3">
-                    {swot.strengths?.map((s: string, i: number) => (
-                      <li key={i} className="flex gap-2 text-sm text-emerald-700 dark:text-emerald-300">
-                        <span className="font-bold shrink-0 mt-0.5">•</span> <span>{s}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="p-6 bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-3xl">
-                  <h3 className="text-lg font-black text-red-800 dark:text-red-400 mb-4 flex items-center gap-2">
-                    <TrendingDown size={20} /> Weaknesses
-                  </h3>
-                  <ul className="space-y-3">
-                    {swot.weaknesses?.map((w: string, i: number) => (
-                      <li key={i} className="flex gap-2 text-sm text-red-700 dark:text-red-300">
-                        <span className="font-bold shrink-0 mt-0.5">•</span> <span>{w}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="p-6 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 rounded-3xl">
-                  <h3 className="text-lg font-black text-blue-800 dark:text-blue-400 mb-4 flex items-center gap-2">
-                    <Lightbulb size={20} /> Opportunities
-                  </h3>
-                  <ul className="space-y-3">
-                    {swot.opportunities?.map((o: string, i: number) => (
-                      <li key={i} className="flex gap-2 text-sm text-blue-700 dark:text-blue-300">
-                        <span className="font-bold shrink-0 mt-0.5">•</span> <span>{o}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="p-6 bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-3xl">
-                  <h3 className="text-lg font-black text-amber-800 dark:text-amber-400 mb-4 flex items-center gap-2">
-                    <ShieldAlert size={20} /> Threats
-                  </h3>
-                  <ul className="space-y-3">
-                    {swot.threats?.map((t: string, i: number) => (
-                      <li key={i} className="flex gap-2 text-sm text-amber-700 dark:text-amber-300">
-                        <span className="font-bold shrink-0 mt-0.5">•</span> <span>{t}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </>
-            );
-          })()}
-        </div>
-      ) : (
-        <div className="flex flex-col items-center justify-center py-16 px-6 bg-slate-50 dark:bg-zinc-900/50 border border-dashed border-slate-300 dark:border-zinc-700 rounded-3xl">
-          <div className="w-16 h-16 bg-white dark:bg-zinc-800 rounded-full flex items-center justify-center shadow-sm mb-4">
-            <Radar size={28} className="text-slate-400" />
-          </div>
-          <h3 className="text-lg font-bold text-slate-700 dark:text-zinc-300 mb-2">No SWOT Analysis yet</h3>
-          <p className="text-sm text-slate-500 text-center max-w-md mb-6">Run a deep AI analysis of this lead's website to identify their Strengths, Weaknesses, Opportunities, and Threats.</p>
-          <button
-            onClick={handleGenerateSwot}
-            disabled={isSwotLoading || !lead.website}
-            className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 dark:bg-white dark:hover:bg-slate-200 dark:text-slate-900 text-white rounded-xl font-bold text-sm shadow-sm transition-all disabled:opacity-50 flex items-center gap-2"
-          >
-            {isSwotLoading ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />}
-            {isSwotLoading ? 'Analyzing...' : (lead.website ? 'Perform SWOT Analysis' : 'Add Website URL first')}
-          </button>
-        </div>
-      )}
-    </motion.div>
-  );
-}
-
 
 
 // ─── MAIN PAGE ───────────────────────────────────────────────────────────────
@@ -626,6 +489,7 @@ export default function LeadDetailsPage() {
   const [files, setFiles]                 = useState<any[]>([]);
   const [research, setResearch]           = useState<any>(null);
   const [isGeneratingResearch, setIsGeneratingResearch] = useState(false);
+  const [isGeneratingCoursePlan, setIsGeneratingCoursePlan] = useState(false);
 
   // UI state
   const [activeTab, setActiveTab]         = useState('overview');
@@ -768,6 +632,20 @@ export default function LeadDetailsPage() {
       }, 5000);
     } catch {
       setIsGeneratingResearch(false);
+    }
+  };
+
+  const handleGenerateCoursePlan = async () => {
+    setIsGeneratingCoursePlan(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/leads/${id}/course-plan`, { method: 'POST' });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not create a course plan.');
+      setLead((current: any) => ({ ...current, course_plan: data.course_plan, course_interest_id: data.course_plan.course_id }));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not create a course plan.');
+    } finally {
+      setIsGeneratingCoursePlan(false);
     }
   };
 
@@ -927,6 +805,7 @@ export default function LeadDetailsPage() {
                     handleGenerateAnalysis={handleGenerateAnalysis}
                     isGeneratingResearch={isGeneratingResearch}
                     onRefresh={fetchAll}
+                    setSelectedActivity={setSelectedActivity}
                   />
                 )}
                 {activeTab === 'timeline' && (
@@ -934,14 +813,6 @@ export default function LeadDetailsPage() {
                     timeline={timeline}
                     timelineFilter={timelineFilter}
                     onFilterChange={setTimelineFilter}
-                  />
-                )}
-                {activeTab === 'ai_data' && (
-                  <AiDataTab
-                    clientId={id}
-                    websiteUrl={lead?.websiteUrl || lead?.website}
-                    resourceType="leads"
-                    onClientRefresh={fetchLead}
                   />
                 )}
                 {activeTab === 'conversations' && (
@@ -973,7 +844,55 @@ export default function LeadDetailsPage() {
 
           {/* ── RIGHT AI PANEL ──────────────────────────────────────── */}
           <aside className="space-y-4">
-            <AiCopilotPanelLead leadId={id} lead={lead} />
+            <AiCopilotPanelLead leadId={id} client={lead} />
+
+            <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm dark:border-emerald-900 dark:bg-zinc-900">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-emerald-700 dark:text-emerald-400" /><h2 className="text-sm font-bold">Course-fit plan</h2></div>
+                <button type="button" onClick={handleGenerateCoursePlan} disabled={isGeneratingCoursePlan} className="inline-flex items-center gap-1.5 rounded-md bg-emerald-800 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-60">
+                  {isGeneratingCoursePlan ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                  {lead?.course_plan ? 'Refresh' : 'Build plan'}
+                </button>
+              </div>
+              {lead?.course_plan ? <div className="mt-4 space-y-4 text-xs leading-5">
+                <div>
+                  <div className="flex items-center justify-between gap-2"><p className="font-semibold text-emerald-800 dark:text-emerald-300">{lead.course_plan.course_title}</p><span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 font-bold text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-200">{lead.course_plan.fit_score_percent ?? 0}% fit</span></div>
+                  <p className="mt-1 text-slate-600 dark:text-zinc-300">{lead.course_plan.fit_reason}</p>
+                </div>
+                <div>
+                  <div className="mb-2 flex justify-between font-semibold"><span>Profile details recorded</span><span>{lead.course_plan.profile_completeness_percent ?? 0}%</span></div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-zinc-800"><div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(100, Math.max(0, Number(lead.course_plan.profile_completeness_percent) || 0))}%` }} /></div>
+                </div>
+                <div className="space-y-2">
+                  <p className="font-semibold">Fit evidence</p>
+                  {Object.entries(lead.course_plan.fit_dimensions || {}).map(([dimension, score]) => {
+                    const labels: Record<string, string> = { interest_match: 'Interest', career_goal_alignment: 'Career goal', background_relevance: 'Background', academic_readiness_evidence: 'Academic evidence' };
+                    const percentage = Math.min(100, Math.max(0, Number(score) || 0));
+                    return <div key={dimension}>
+                      <div className="mb-0.5 flex justify-between text-slate-600 dark:text-zinc-300"><span>{labels[dimension] || dimension.replaceAll('_', ' ')}</span><span>{percentage}%</span></div>
+                      <div className="h-1 overflow-hidden rounded-full bg-slate-100 dark:bg-zinc-800"><div className="h-full rounded-full bg-teal-600" style={{ width: `${percentage}%` }} /></div>
+                    </div>;
+                  })}
+                </div>
+                <dl className="space-y-1 border-t border-slate-100 pt-3 dark:border-zinc-800">
+                  <div className="flex justify-between gap-2"><dt className="text-slate-500">Education</dt><dd className="text-right">{lead.course_plan.profile_evidence?.education_level || 'Not recorded'}</dd></div>
+                  <div className="flex justify-between gap-2"><dt className="text-slate-500">GPA</dt><dd>{lead.course_plan.profile_evidence?.gpa ?? 'Not recorded'}</dd></div>
+                  <div><dt className="text-slate-500">Background</dt><dd className="mt-0.5 text-slate-700 dark:text-zinc-300">{lead.course_plan.profile_evidence?.academic_background || 'Not recorded'}</dd></div>
+                  <div><dt className="text-slate-500">Career goal</dt><dd className="mt-0.5 text-slate-700 dark:text-zinc-300">{lead.course_plan.profile_evidence?.career_goal || 'Not recorded'}</dd></div>
+                </dl>
+                {!!lead.course_plan.recommended_courses?.length && <div>
+                  <p className="mb-1 font-semibold">Top course options</p>
+                  <ol className="space-y-1">{lead.course_plan.recommended_courses.map((course: any, index: number) => <li key={course.course_id} className="flex justify-between gap-2 text-slate-600 dark:text-zinc-300"><span>{index + 1}. {course.course_title}</span><span className="shrink-0 font-semibold">{course.fit_score_percent}%</span></li>)}</ol>
+                </div>}
+                {!!lead.course_plan.learning_roadmap?.length && <div>
+                  <p className="mb-1 font-semibold">Suggested learning path</p>
+                  <ol className="space-y-2">{lead.course_plan.learning_roadmap.map((phase: any) => <li key={phase.phase}><span className="font-medium">{phase.phase}</span><span className="ml-1 text-slate-500">(weeks {phase.weeks})</span><p className="text-slate-600 dark:text-zinc-300">{phase.focus}</p></li>)}</ol>
+                </div>}
+                {!!lead.course_plan.readiness_gaps?.length && <div><p className="font-semibold">Information to confirm</p><ul className="mt-1 list-disc space-y-1 pl-4 text-slate-600 dark:text-zinc-300">{lead.course_plan.readiness_gaps.map((item: string, index: number) => <li key={index}>{item}</li>)}</ul></div>}
+                <div><p className="font-semibold">Personalized conversation</p><p className="mt-1 text-slate-600 dark:text-zinc-300">{lead.course_plan.pitch}</p></div>
+                <p className="border-t border-slate-100 pt-2 text-[10px] text-slate-400 dark:border-zinc-800">Fit percentages compare recorded profile details with course catalog text. They are guidance, not outcome predictions.</p>
+              </div> : <p className="mt-3 text-xs leading-5 text-slate-500 dark:text-zinc-400">Use the learner’s academic background, goals, and catalog selection to prepare a relevant course conversation.</p>}
+            </section>
 
             {/* Assign Salesperson Card */}
             {role === 'Admin' && (
@@ -996,6 +915,18 @@ export default function LeadDetailsPage() {
                   onChange={async (e) => {
                     const val = e.target.value;
                     if (!val) return;
+                    if (val === 'auto_assign') {
+                      e.currentTarget.value = lead?.assignedEmployeeId || '';
+                      try {
+                        const response = await fetch(`${API_BASE_URL}/leads/${id}/auto-assign-employee`, { method: 'POST' });
+                        const data = await response.json();
+                        if (!response.ok) throw new Error(data.detail || 'Could not auto-assign this lead.');
+                        await fetchLead();
+                      } catch (error) {
+                        alert(error instanceof Error ? error.message : 'Could not auto-assign this lead.');
+                      }
+                      return;
+                    }
                     if (val === 'create_new') {
                       setIsCreateUserOpen(true);
                       // Reset to original value visually so 'create_new' doesn't stay selected
@@ -1014,6 +945,7 @@ export default function LeadDetailsPage() {
                              focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="">{language === 'es' ? 'Cambiar vendedor…' : 'Change salesperson…'}</option>
+                  <option value="auto_assign">Auto-assign by collected revenue</option>
                   <option value="create_new" className="font-bold text-indigo-600">➕ {language === 'es' ? 'Crear Nuevo Vendedor' : 'Create New Salesperson'}</option>
                   {employees.filter((e: any) => ["Employee", "Admin", "SalesManager"].includes(e.role)).map((e: any) => (
                     <option key={e.id} value={e.id}>{e.name} — {e.role}</option>
@@ -1031,11 +963,8 @@ export default function LeadDetailsPage() {
                     <Globe className="w-3.5 h-3.5" /> Visit Site
                   </a>
                 )}
-                <button 
-                  onClick={() => router.push(`/leads/${id}/competitors`)}
-                  className="flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-purple-600 to-indigo-600 px-4 py-1.5 rounded-lg shadow-md hover:shadow-lg transition-all"
-                >
-                  <Navigation className="w-3.5 h-3.5" /> Radar Scan
+                <button type="button" onClick={handleGenerateCoursePlan} className="flex items-center gap-1.5 rounded-md bg-emerald-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
+                  <Sparkles className="h-3.5 w-3.5" /> Course fit
                 </button>
               </div>
               <p className="text-xs font-black uppercase tracking-wider text-slate-400  mb-2">{language === 'es' ? 'Fechas de Seguimiento' : 'Follow-up Dates'}</p>

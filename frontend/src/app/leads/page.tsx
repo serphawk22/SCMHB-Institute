@@ -2,11 +2,12 @@
 import { API_BASE_URL } from "@/config";
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Filter, MoreVertical, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ChevronDown, ArrowUpRight, CheckCircle2, Clock, Zap, Edit2, Trash2, Tag } from "lucide-react";
+import { Search, Plus, Filter, MoreVertical, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ChevronDown, ArrowUpRight, Clock, Zap, Edit2, Trash2, Tag, GraduationCap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ViewSwitcher, ViewType } from "@/components/ViewSwitcher";
 import DemoLimits from "@/components/DemoLimits";
+import LeadBatchEnrollmentAction from "@/components/LeadBatchEnrollmentAction";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useLanguage } from "@/context/LanguageContext";
 import SalesAssignModal from "@/components/SalesAssignModal";
@@ -16,15 +17,24 @@ interface Lead {
   company_name: string;
   website?: string | null;
   industry?: string | null;
+  course_interest_title?: string | null;
+  course_interest_id?: number | null;
+  gpa?: number | null;
+  education_level?: string | null;
+  academic_background?: string | null;
+  career_goal?: string | null;
   email?: string | null;
   phone?: string | null;
   address?: string | null;
   source?: string | null;
   status: string;
   is_converted: boolean;
+  converted_student_id?: number | null;
   notes?: string | null;
   created_at: string;
 }
+
+interface CourseOption { id: number; title: string; category?: string | null; duration_hours?: number | null; duration_weeks?: number | null; }
 
 interface ActivityLogEntry {
   id: number;
@@ -36,13 +46,8 @@ interface ActivityLogEntry {
   createdAt: string;
 }
 
-const INDUSTRIES = [
-  "Technology", "Marketing", "E-commerce", "Healthcare", "Finance",
-  "Real Estate", "Education", "Manufacturing", "Retail", "Legal",
-  "Consulting", "Media", "Hospitality", "Construction", "Other"
-];
-const SOURCES = ["Website", "Email", "Referral", "LinkedIn", "Cold Call", "Event", "Radar", "Import", "Other"];
-const STATUSES = ["New", "Contacted", "Qualified", "Proposal Sent", "Negotiation", "Won", "Lost"];
+const SOURCES = ["Walk-in", "Referral", "WhatsApp", "Instagram", "Facebook", "Website", "Phone Call", "Event", "Other"];
+const STATUSES = ["New", "Contacted", "Qualified", "Interested", "Demo Scheduled", "Proposal Sent", "Negotiation", "Follow-up", "Won", "Enrolled", "Lost"];
 
 const STATUS_STYLE: Record<string, string> = {
   New: "bg-blue-500/10 text-blue-600 border-blue-500/20",
@@ -53,16 +58,17 @@ const STATUS_STYLE: Record<string, string> = {
   Won: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
   Lost: "bg-red-500/10 text-red-500 border-red-500/20",
   Converted: "bg-green-500/10 text-green-700 border-green-500/20",
+  Enrolled: "bg-emerald-500/10 text-emerald-700 border-emerald-500/20",
 };
 
 const emptyForm = {
-  company_name: "", website: "", industry: "", email: "",
+  company_name: "", website: "", industry: "", course_interest_id: "", gpa: "", education_level: "", academic_background: "", career_goal: "", email: "",
   phone: "", address: "", source: "Website", status: "New", notes: ""
 };
 import { useRole } from "@/context/RoleContext";
 
 export default function LeadsPage() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { role, user } = useRole();
   const router = useRouter();
 
@@ -73,6 +79,7 @@ export default function LeadsPage() {
   }, [role, router]);
 
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [courses, setCourses] = useState<CourseOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
@@ -91,6 +98,13 @@ export default function LeadsPage() {
   const [pendingLeadForm, setPendingLeadForm] = useState<any>(null);
 
   useEffect(() => { fetchLeads(); fetchActivities(); }, []);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/courses`)
+      .then(response => response.ok ? response.json() : Promise.reject(new Error("Course catalog unavailable")))
+      .then(data => setCourses(data.courses || []))
+      .catch(error => console.warn("Could not load course catalog for lead intake", error));
+  }, []);
 
   const searchParams = useSearchParams();
   useEffect(() => {
@@ -163,6 +177,11 @@ export default function LeadsPage() {
       company_name: lead.company_name,
       website: lead.website || "",
       industry: lead.industry || "",
+      course_interest_id: lead.course_interest_id ? String(lead.course_interest_id) : "",
+      gpa: lead.gpa === null || lead.gpa === undefined ? "" : String(lead.gpa),
+      education_level: lead.education_level || "",
+      academic_background: lead.academic_background || "",
+      career_goal: lead.career_goal || "",
       email: lead.email || "",
       phone: lead.phone || "",
       address: lead.address || "",
@@ -177,17 +196,24 @@ export default function LeadsPage() {
     if (!form.company_name.trim()) return;
     setSaving(true);
     try {
+      const selectedCourse = courses.find(course => String(course.id) === form.course_interest_id);
+      const payload = {
+        ...form,
+        industry: selectedCourse?.category || form.industry,
+        course_interest_id: form.course_interest_id ? Number(form.course_interest_id) : null,
+        gpa: form.gpa ? Number(form.gpa) : null,
+      };
       if (editLead) {
         // Edit: save directly, no sales assign needed
         await fetch(`${API_BASE_URL}/leads/${editLead.id}`, {
           method: "PUT", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(form),
+          body: JSON.stringify(payload),
         });
         setShowModal(false);
         fetchLeads();
       } else {
         // New lead: show sales assign modal
-        setPendingLeadForm({ ...form });
+        setPendingLeadForm(payload);
         setShowModal(false);
         setShowSalesAssign(true);
       }
@@ -214,17 +240,6 @@ export default function LeadsPage() {
     if (!confirm(t("leads.confirm_delete"))) return;
     await fetch(`${API_BASE_URL}/leads/${id}`, { method: "DELETE" });
     fetchLeads();
-  };
-
-  const handleConvert = async (id: number, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!confirm(t("leads.confirm_convert"))) return;
-    try {
-      await fetch(`${API_BASE_URL}/leads/${id}/convert`, { method: "POST" });
-      fetchLeads();
-    } catch (err) {
-      console.error(err);
-    }
   };
 
   const handleAddNote = (lead: Lead, e: React.MouseEvent) => {
@@ -451,8 +466,8 @@ export default function LeadsPage() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 text-[13px] font-semibold text-slate-500 dark:text-slate-400">
-                <th className="px-6 py-4 font-medium">Company</th>
-                <th className="px-6 py-4 font-medium">Industry</th>
+                <th className="px-6 py-4 font-medium">Student</th>
+                <th className="px-6 py-4 font-medium">Course</th>
                 <th className="px-6 py-4 font-medium">Contact</th>
                 <th className="px-6 py-4 font-medium">Source</th>
                 <th className="px-6 py-4 font-medium">Status</th>
@@ -489,7 +504,7 @@ export default function LeadsPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-[13px] text-slate-600 dark:text-slate-300">{lead.industry || "—"}</td>
+                    <td className="px-6 py-4 text-[13px] text-slate-600 dark:text-slate-300">{lead.course_interest_title || lead.industry || "—"}</td>
                     <td className="px-6 py-4">
                       <div className="flex flex-col gap-0.5">
                         {lead.email && <div className="flex items-center gap-1 text-[12px] text-slate-500"><Mail className="w-3 h-3" /><span className="truncate max-w-[160px]">{lead.email}</span></div>}
@@ -503,16 +518,28 @@ export default function LeadsPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border ${STATUS_STYLE[lead.is_converted ? "Converted" : lead.status] || STATUS_STYLE.New}`}>
-                        {lead.is_converted ? "Converted" : lead.status}
+                      <span className={`inline-flex items-center px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border ${STATUS_STYLE[lead.converted_student_id ? "Enrolled" : lead.is_converted ? "Converted" : lead.status] || STATUS_STYLE.New}`}>
+                        {lead.converted_student_id ? "Enrolled" : lead.is_converted ? "Converted" : lead.status}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {!lead.is_converted && (
-                          <button onClick={e => handleConvert(lead.id, e)} title={t("leads.convert_to_client")} className="p-1.5 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/30 text-slate-400 hover:text-green-600 transition-colors">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
+                        {lead.converted_student_id ? (
+                          <button
+                            onClick={e => { e.stopPropagation(); router.push(`/students/${lead.converted_student_id}`); }}
+                            title="Enrolled student profile"
+                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/40"
+                          >
+                            <GraduationCap className="w-4 h-4" />
                           </button>
+                        ) : (
+                          <LeadBatchEnrollmentAction
+                            leadId={lead.id}
+                            leadName={lead.company_name}
+                            convertedStudentId={lead.converted_student_id}
+                            compact
+                            onEnrolled={fetchLeads}
+                          />
                         )}
                         <button onClick={e => handleAddNote(lead, e)} title={t("leads.add_note")} className="p-1.5 rounded-lg hover:bg-yellow-100 dark:hover:bg-yellow-900/30 text-slate-400 hover:text-yellow-600 transition-colors">
                           <Tag className="w-3.5 h-3.5" />
@@ -596,16 +623,16 @@ export default function LeadsPage() {
 
               {/* Form */}
               <div className="px-6 py-5 space-y-4">
-                {/* Company Name — required */}
+                {/* Student identity — required */}
                 <div>
                   <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1.5 block">
-                    {t("leads.company_name")} <span className="text-red-500">*</span>
+                    {language === "es" ? "Nombre del estudiante" : "Student name"} <span className="text-red-500">*</span>
                   </label>
                   <input
                     autoFocus
                     value={form.company_name}
                     onChange={e => setForm(f => ({ ...f, company_name: e.target.value }))}
-                    placeholder="e.g. Acme Corp"
+                    placeholder="e.g. Asha Patel"
                     className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                   />
                 </div>
@@ -625,11 +652,14 @@ export default function LeadsPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">{t("leads.industry")}</label>
-                    <select value={form.industry} onChange={e => setForm(f => ({ ...f, industry: e.target.value }))}
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">Interested course</label>
+                    <select value={form.course_interest_id} onChange={e => {
+                      const course = courses.find(item => String(item.id) === e.target.value);
+                      setForm(f => ({ ...f, course_interest_id: e.target.value, industry: course?.category || "" }));
+                    }}
                       className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
-                      <option value="">{t("leads.select_industry")}</option>
-                      {INDUSTRIES.map(i => <option key={i}>{i}</option>)}
+                      <option value="">Select from course catalog</option>
+                      {courses.map(course => <option key={course.id} value={course.id}>{course.title}{course.duration_hours ? ` · ${course.duration_hours}h` : ""}</option>)}
                     </select>
                   </div>
                   <div>
@@ -639,6 +669,27 @@ export default function LeadsPage() {
                       {SOURCES.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">Education level</label>
+                    <select value={form.education_level} onChange={e => setForm(f => ({ ...f, education_level: e.target.value }))} className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white">
+                      <option value="">Select education level</option><option>High school</option><option>Diploma</option><option>Bachelor&apos;s</option><option>Master&apos;s</option><option>Doctorate</option><option>Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">GPA (0-10 scale)</label>
+                    <input type="number" min="0" max="10" step="0.1" value={form.gpa} onChange={e => setForm(f => ({ ...f, gpa: e.target.value }))} placeholder="e.g. 8.2" className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">Academic / work background</label>
+                  <textarea value={form.academic_background} onChange={e => setForm(f => ({ ...f, academic_background: e.target.value }))} rows={2} placeholder="Previous study, experience, strengths, and skills to build on" className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white resize-y" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">Career goal</label>
+                  <textarea value={form.career_goal} onChange={e => setForm(f => ({ ...f, career_goal: e.target.value }))} rows={2} placeholder="What role, industry, or opportunity is the student working toward?" className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white resize-y" />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">

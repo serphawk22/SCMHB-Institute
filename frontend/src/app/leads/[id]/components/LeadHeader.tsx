@@ -1,13 +1,16 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { motion } from 'framer-motion';
 import {
   Building2, Star, User, ArrowLeft, Plus, MessageSquare,
   CheckSquare, Calendar, Mail, Upload, Target, Zap,
-  TrendingUp, Phone, Globe, Sun, Moon, MapPin, Linkedin
+  TrendingUp, Phone, Globe, Sun, Moon, MapPin, Linkedin,
+  GraduationCap, ArrowUpRight
 } from 'lucide-react';
 import { useLanguage } from '@/context/LanguageContext';
+import LeadBatchEnrollmentAction from '@/components/LeadBatchEnrollmentAction';
 
 interface LeadHeaderProps {
   lead: any;
@@ -19,7 +22,7 @@ interface LeadHeaderProps {
   onScheduleMeeting: () => void;
   onSendEmail: () => void;
   onUploadFile: () => void;
-  onCreateOpportunity: () => void;
+  onCreateOpportunity?: () => void;
   darkMode: boolean;
   onToggleDarkMode: () => void;
 }
@@ -64,7 +67,6 @@ export default function LeadHeader({
 
   // Contact info pills for display in header
   const contactChips = [
-    null && { icon: User,     value: lead.contact_person },
     lead?.email          && { icon: Mail,     value: lead.email,     href: `mailto:${lead.email}` },
     lead?.phone          && { icon: Phone,    value: lead.phone,     href: `tel:${lead.phone}` },
     lead?.website     && { icon: Globe,    value: lead.websiteUrl, href: lead.websiteUrl },
@@ -84,12 +86,30 @@ export default function LeadHeader({
 
         {/* Row 1: Breadcrumb + Controls */}
         <div className="flex items-center justify-between mb-3">
-          <button
-            onClick={onBack}
-            className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-zinc-400 hover:text-indigo-600 transition-colors font-bold tracking-tight"
-          >
-            <ArrowLeft size={16} className="text-slate-400" /> {language === 'es' ? 'Volver a Clientes' : 'Back to Leads'}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-zinc-400 hover:text-indigo-600 transition-colors font-bold tracking-tight"
+            >
+              <ArrowLeft size={16} className="text-slate-400" /> {language === 'es' ? 'Volver a Clientes' : 'Back to Leads'}
+            </button>
+            {(lead?.is_converted || lead?.converted_student_id) ? (
+              <Link
+                href={`/students/${lead.converted_student_id}`}
+                className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 bg-emerald-50 px-3.5 py-1.5 text-xs font-bold text-emerald-800 shadow-sm transition hover:bg-emerald-100 hover:shadow dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+              >
+                <GraduationCap size={16} className="text-emerald-600 dark:text-emerald-400" />
+                <span>Enrolled: {lead.enrolled_course_name || lead.course_interest_title || lead.industry || 'Student Profile'}</span>
+                <ArrowUpRight size={14} className="text-emerald-600 dark:text-emerald-400" />
+              </Link>
+            ) : (
+              <LeadBatchEnrollmentAction
+                leadId={lead.id}
+                leadName={companyName || 'Lead'}
+                convertedStudentId={lead.converted_student_id}
+              />
+            )}
+          </div>
         </div>
 
         {/* Row 2: Main header - Company identity + Contact Info + Score */}

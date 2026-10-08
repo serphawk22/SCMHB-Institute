@@ -1,57 +1,96 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { 
   Calendar, CheckSquare, PhoneCall, Users, Target, Radar, Briefcase,
-  Clock, CheckCircle, Search, Filter, Loader2, Play, AlertCircle
+  Clock, CheckCircle, Loader2, Play, AlertCircle, ArrowUpRight
 } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
-import { useRole } from "@/context/RoleContext";
+
+interface WorkQueueItem {
+  id: number;
+  _type?: string;
+  title?: string | null;
+  description?: string | null;
+  due_date?: string | null;
+  scheduled_at?: string | null;
+  created_at?: string | null;
+  status?: string | null;
+  lead_id?: number | null;
+  student_id?: number | null;
+  company_name?: string | null;
+  companyName?: string | null;
+  projectName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  designation?: string | null;
+  meeting_type?: string | null;
+  purpose?: string | null;
+  value?: number | null;
+  deal_name?: string | null;
+  stage?: string | null;
+  task?: string | null;
+  project_id?: number | null;
+  current_state?: string | null;
+  requested_date?: string | null;
+  date_release_prod?: string | null;
+  createdAt?: string | null;
+  subject?: string | null;
+}
+
+function withType(items: unknown, type: string): WorkQueueItem[] {
+  if (!Array.isArray(items)) return [];
+  return items.map(item => ({ ...(item as WorkQueueItem), _type: type }));
+}
 
 export default function WorkQueuePage() {
-  const { language, t } = useLanguage();
-  const { role, user } = useRole();
+  const { t } = useLanguage();
   const [dateFilter, setDateFilter] = useState("today");
   const [activeTab, setActiveTab] = useState("combined");
   const [loading, setLoading] = useState(true);
-  const [data, setData] = useState<any>({
+  const [data, setData] = useState<Record<string, WorkQueueItem[]>>({
     tasks: [], meetings: [], calls: [], leads: [], contacts: [], deals: [], clients: [], tickets: [], ticket_due: [], ticket_ongoing: [], ticket_completed: [], cases: []
   });
 
-  useEffect(() => {
-    fetchWorkQueue();
-  }, [dateFilter]);
-
-  const fetchWorkQueue = async () => {
+  const fetchWorkQueue = useCallback(async () => {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`${API_BASE_URL}/work-queue?date_filter=${dateFilter}&user_id=${user?.id || 0}&role=${role || 'Employee'}`, {
+      const res = await fetch(`${API_BASE_URL}/work-queue?date_filter=${dateFilter}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      const json = await res.json();
+      const json = await res.json() as Record<string, unknown> & { ok?: boolean };
       if (json.ok) {
-        if (json.tasks) json.tasks = json.tasks.map((i:any) => ({...i, _type: 'task'}));
-        if (json.meetings) json.meetings = json.meetings.map((i:any) => ({...i, _type: 'meeting'}));
-        if (json.calls) json.calls = json.calls.map((i:any) => ({...i, _type: 'call'}));
-        if (json.leads) json.leads = json.leads.map((i:any) => ({...i, _type: 'lead'}));
-        if (json.contacts) json.contacts = json.contacts.map((i:any) => ({...i, _type: 'contact'}));
-        if (json.deals) json.deals = json.deals.map((i:any) => ({...i, _type: 'deal'}));
-        if (json.tickets) json.tickets = json.tickets.map((i:any) => ({...i, _type: 'ticket'}));
-        if (json.ticket_due) json.ticket_due = json.ticket_due.map((i:any) => ({...i, _type: 'ticket_due'}));
-        if (json.ticket_ongoing) json.ticket_ongoing = json.ticket_ongoing.map((i:any) => ({...i, _type: 'ticket_ongoing'}));
-        if (json.ticket_completed) json.ticket_completed = json.ticket_completed.map((i:any) => ({...i, _type: 'ticket_completed'}));
-        if (json.cases) json.cases = json.cases.map((i:any) => ({...i, _type: 'case'}));
-        setData(json);
+        setData({
+          tasks: withType(json.tasks, "task"),
+          meetings: withType(json.meetings, "meeting"),
+          calls: withType(json.calls, "call"),
+          leads: withType(json.leads, "lead"),
+          contacts: withType(json.contacts, "contact"),
+          deals: withType(json.deals, "deal"),
+          clients: withType(json.clients, "client"),
+          tickets: withType(json.tickets, "ticket"),
+          ticket_due: withType(json.ticket_due, "ticket_due"),
+          ticket_ongoing: withType(json.ticket_ongoing, "ticket_ongoing"),
+          ticket_completed: withType(json.ticket_completed, "ticket_completed"),
+          cases: withType(json.cases, "case"),
+        });
       }
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateFilter]);
+
+  useEffect(() => {
+    void fetchWorkQueue();
+  }, [fetchWorkQueue]);
 
   const TABS = [
     { id: "combined", label: t("work_queue.tab_combined"), icon: Target, color: "text-indigo-500", bg: "bg-indigo-100" },
@@ -69,13 +108,7 @@ export default function WorkQueuePage() {
     { id: "deals", label: t("work_queue.tab_deals"), icon: Briefcase, color: "text-emerald-500", bg: "bg-emerald-100" },
   ];
 
-  const dateLabels: Record<string, string> = {
-    yesterday: "yesterday",
-    today: "today",
-    tomorrow: "tomorrow",
-  };
-
-  const renderItemCard = (item: any, type: string) => {
+  const renderItemCard = (item: WorkQueueItem, type: string) => {
     let title = "";
     let sub = "";
     let time = "";
@@ -85,18 +118,18 @@ export default function WorkQueuePage() {
 
     switch(type) {
       case "task":
-        title = item.title;
+        title = item.title || item.task || "Task";
         sub = item.description || t("work_queue.no_description");
         time = item.due_date ? new Date(item.due_date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
-        status = item.status;
+        status = item.status || "";
         Icon = CheckSquare;
         badgeColor = "bg-blue-100 text-blue-700";
         break;
       case "meeting":
-        title = item.title;
+        title = item.title || "Meeting";
         sub = item.meeting_type || t("work_queue.meeting");
         time = item.scheduled_at ? new Date(item.scheduled_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
-        status = item.status;
+        status = item.status || "";
         Icon = Calendar;
         badgeColor = "bg-purple-100 text-purple-700";
         break;
@@ -104,20 +137,20 @@ export default function WorkQueuePage() {
         title = item.title || t("work_queue.scheduled_call");
         sub = item.purpose || t("work_queue.follow_up");
         time = item.scheduled_at ? new Date(item.scheduled_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
-        status = item.status;
+        status = item.status || "";
         Icon = PhoneCall;
         badgeColor = "bg-green-100 text-green-700";
         break;
       case "lead":
-        title = item.company_name;
+        title = item.company_name || "Lead";
         sub = item.email || item.phone || t("work_queue.no_contact_info");
         time = item.created_at ? new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
-        status = item.status;
+        status = item.status || "";
         Icon = Radar;
         badgeColor = "bg-amber-100 text-amber-700";
         break;
       case "contact":
-        title = `${item.first_name} ${item.last_name || ""}`;
+        title = `${item.first_name || "Contact"} ${item.last_name || ""}`;
         sub = item.designation || item.email || t("work_queue.contact");
         time = item.created_at ? new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
         status = "Active";
@@ -125,28 +158,28 @@ export default function WorkQueuePage() {
         badgeColor = "bg-pink-100 text-pink-700";
         break;
       case "deal":
-        title = item.title || item.deal_name;
+        title = item.title || item.deal_name || "Deal";
         sub = item.value ? `$${item.value}` : t("work_queue.deal");
         time = item.created_at ? new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
-        status = item.stage || item.status;
+        status = item.stage || item.status || "";
         Icon = Briefcase;
         badgeColor = "bg-emerald-100 text-emerald-700";
         break;
       case "ticket":
-        title = item.task;
+        title = item.task || "Ticket";
         sub = item.project_id ? `Project #${item.project_id}` : "Dev Ticket";
         time = item.created_at ? new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
-        status = item.current_state;
+        status = item.current_state || "";
         Icon = Play;
         badgeColor = "bg-cyan-100 text-cyan-700";
         break;
       case "ticket_due":
       case "ticket_ongoing":
       case "ticket_completed":
-        title = item.task;
+        title = item.task || "Development ticket";
         sub = item.project_id ? `Project #${item.project_id}` : "Development ticket";
         time = item.requested_date || item.date_release_prod || "";
-        status = item.current_state;
+        status = item.current_state || "";
         Icon = type === "ticket_completed" ? CheckCircle : type === "ticket_ongoing" ? Play : Clock;
         badgeColor = type === "ticket_completed" ? "bg-emerald-100 text-emerald-700" : type === "ticket_ongoing" ? "bg-violet-100 text-violet-700" : "bg-amber-100 text-amber-700";
         break;
@@ -154,19 +187,30 @@ export default function WorkQueuePage() {
         title = item.companyName || item.projectName || "Client";
         sub = item.email || item.phone || "Assigned client";
         time = item.createdAt ? new Date(item.createdAt).toLocaleDateString() : "";
-        status = item.status;
+        status = item.status || "";
         Icon = Briefcase;
         badgeColor = "bg-indigo-100 text-indigo-700";
         break;
       case "case":
-        title = item.subject;
+        title = item.subject || "Support case";
         sub = item.description || "Support case";
         time = item.created_at ? new Date(item.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "";
-        status = item.status;
+        status = item.status || "";
         Icon = AlertCircle;
         badgeColor = "bg-rose-100 text-rose-700";
         break;
     }
+
+    const itemHref = type === "lead" ? `/leads/${item.id}`
+      : item.lead_id ? `/leads/${item.lead_id}`
+      : item.student_id ? `/students/${item.student_id}`
+      : type === "client" ? `/clients/${item.id}`
+      : type === "deal" ? "/pipeline"
+      : type === "contact" ? "/contacts"
+      : type === "meeting" ? "/meetings"
+      : type === "call" ? "/calls"
+      : type.startsWith("ticket") ? "/support/cases"
+      : "/tasks";
 
     return (
       <motion.div 
@@ -196,9 +240,9 @@ export default function WorkQueuePage() {
           </div>
         </div>
         <div className="shrink-0 flex items-center justify-end">
-           <button className="w-10 h-10 rounded-full bg-slate-50 dark:bg-zinc-800 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
-              <Play size={16} className="ml-0.5" />
-           </button>
+            <Link href={itemHref} aria-label={`Open ${title}`} className="w-10 h-10 rounded-full bg-slate-50 dark:bg-zinc-800 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors">
+              <ArrowUpRight size={16} />
+            </Link>
         </div>
       </motion.div>
     );
@@ -207,17 +251,17 @@ export default function WorkQueuePage() {
   const getFilteredItems = () => {
     if (activeTab === "combined") {
       return [
-        ...(data.tasks || []).map((i:any) => ({...i, _type: 'task'})),
-        ...(data.meetings || []).map((i:any) => ({...i, _type: 'meeting'})),
-        ...(data.calls || []).map((i:any) => ({...i, _type: 'call'})),
-        ...(data.leads || []).map((i:any) => ({...i, _type: 'lead'})),
-        ...(data.contacts || []).map((i:any) => ({...i, _type: 'contact'})),
-        ...(data.deals || []).map((i:any) => ({...i, _type: 'deal'})),
-        ...(data.ticket_due || []).map((i:any) => ({...i, _type: 'ticket_due'})),
-        ...(data.ticket_ongoing || []).map((i:any) => ({...i, _type: 'ticket_ongoing'})),
-        ...(data.ticket_completed || []).map((i:any) => ({...i, _type: 'ticket_completed'})),
-        ...(data.clients || []).map((i:any) => ({...i, _type: 'client'})),
-        ...(data.cases || []).map((i:any) => ({...i, _type: 'case'}))
+        ...data.tasks,
+        ...data.meetings,
+        ...data.calls,
+        ...data.leads,
+        ...data.contacts,
+        ...data.deals,
+        ...data.ticket_due,
+        ...data.ticket_ongoing,
+        ...data.ticket_completed,
+        ...data.clients,
+        ...data.cases,
       ].sort((a, b) => {
         const d1 = new Date(a.due_date || a.scheduled_at || a.created_at || 0).getTime();
         const d2 = new Date(b.due_date || b.scheduled_at || b.created_at || 0).getTime();
@@ -231,7 +275,7 @@ export default function WorkQueuePage() {
       clients: "client",
       cases: "case",
     };
-    return (data[activeTab] || []).map((i:any) => ({...i, _type: typeMap[activeTab] || activeTab.slice(0, -1)}));
+    return (data[activeTab] || []).map(item => ({ ...item, _type: typeMap[activeTab] || activeTab.slice(0, -1) }));
   };
 
   const filteredItems = getFilteredItems();
@@ -254,18 +298,18 @@ export default function WorkQueuePage() {
             </p>
           </div>
 
-          <div className="bg-slate-100 dark:bg-zinc-900 p-1 rounded-xl flex items-center shadow-inner">
-            {(["yesterday", "today", "tomorrow"] as const).map(d => (
+          <div className="flex flex-wrap items-center gap-1 rounded-xl bg-slate-100 p-1 shadow-inner dark:bg-zinc-900">
+            {(["yesterday", "today", "tomorrow", "week"] as const).map(d => (
               <button
                 key={d}
                 onClick={() => setDateFilter(d)}
-                className={`px-6 py-2.5 rounded-lg text-sm font-black capitalize transition-all ${
+                className={`px-3 py-2.5 rounded-lg text-sm font-black capitalize transition-all sm:px-6 ${
                   dateFilter === d 
                   ? "bg-white dark:bg-zinc-800 text-indigo-600 shadow-sm" 
                   : "text-slate-500 dark:text-zinc-400 hover:text-slate-700 dark:hover:text-zinc-300"
                 }`}
               >
-                {d}
+                {d === "week" ? "This week" : d}
               </button>
             ))}
           </div>
@@ -319,7 +363,7 @@ export default function WorkQueuePage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {filteredItems.map((item: any, i: number) => renderItemCard(item, item._type))}
+                  {filteredItems.map(item => renderItemCard(item, item._type || "task"))}
                 </div>
               )}
             </>

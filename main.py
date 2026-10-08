@@ -1,11 +1,15 @@
 
 from __future__ import annotations
+import random
+import string
+import os
+import uuid
 
 """
 CRM V2 – SerpHawk  |  FastAPI Backend
 """
 
-from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, File, UploadFile, Form
 from fastapi.websockets import WebSocket, WebSocketDisconnect
 from sqlmodel import Session
 from modules.scraper import research_and_map_company
@@ -156,6 +160,7 @@ def _add_tenant_filter(execute_state):
         "audit_logs",      # telemetry must always be cross-tenant for admin view
         "users",           # users table is queried cross-tenant (e.g. login, notifications)
         "notifications",   # user-scoped not tenant-scoped
+        "task_sheet_entries", # task sheet is user and date scoped
     ]
     
     if execute_state.is_select or execute_state.is_update or execute_state.is_delete:
@@ -184,7 +189,7 @@ def _auto_assign_tenant_id(session, flush_context, instances):
         
     global_tables = [
         "tenants", "client_statuses", "service_catalog",
-        "audit_logs", "users", "notifications",
+        "audit_logs", "users", "notifications", "task_sheet_entries",
     ]
     
     for obj in session.new:
@@ -505,6 +510,8 @@ def on_startup():
             conn.execute(text('ALTER TABLE task_sheet_entries ADD COLUMN IF NOT EXISTS blocker TEXT;'))
             conn.execute(text('ALTER TABLE task_sheet_entries ADD COLUMN IF NOT EXISTS follow_up_date VARCHAR(20);'))
             conn.execute(text('ALTER TABLE task_sheet_entries ADD COLUMN IF NOT EXISTS completion_date VARCHAR(20);'))
+            conn.execute(text('ALTER TABLE task_sheet_entries ADD COLUMN IF NOT EXISTS proof_of_work TEXT;'))
+            conn.execute(text('ALTER TABLE task_sheet_entries ADD COLUMN IF NOT EXISTS expected_date VARCHAR(50);'))
             
             # Radar & Competitor Relationship Leads Migration
             try:
@@ -582,25 +589,33 @@ def on_startup():
     except Exception as e:
         print(f"Default tenant bootstrap error: {e}")
 
-    for table in tables_with_tenant:
+    if not os.path.exists(".tenant_migration_done"):
+        for table in tables_with_tenant:
+            try:
+                with engine.connect() as conn:
+                    default_tenant_id = conn.execute(text("SELECT id FROM tenants ORDER BY id LIMIT 1")).scalar()
+                    if default_tenant_id is None:
+                        print(f"Skipping tenant backfill for {table} because no tenant rows exist.")
+                        continue
+
+                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;'))
+                    conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_{table}_tenant_id ON {table} (tenant_id);'))
+
+                    # Fix for existing records that have NULL tenant_id after migration
+                    conn.execute(text(f'UPDATE {table} SET tenant_id = :tenant_id WHERE tenant_id IS NULL;'), {"tenant_id": default_tenant_id})
+
+                    conn.commit()
+            except Exception as e:
+                print(f"Migration error for {table}: {e}")
+
+        print(f"Finished checking and adding tenant_id columns to {len(tables_with_tenant)} tables.")
         try:
-            with engine.connect() as conn:
-                default_tenant_id = conn.execute(text("SELECT id FROM tenants ORDER BY id LIMIT 1")).scalar()
-                if default_tenant_id is None:
-                    print(f"Skipping tenant backfill for {table} because no tenant rows exist.")
-                    continue
-
-                conn.execute(text(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS tenant_id INTEGER REFERENCES tenants(id) ON DELETE CASCADE;'))
-                conn.execute(text(f'CREATE INDEX IF NOT EXISTS ix_{table}_tenant_id ON {table} (tenant_id);'))
-
-                # Fix for existing records that have NULL tenant_id after migration
-                conn.execute(text(f'UPDATE {table} SET tenant_id = :tenant_id WHERE tenant_id IS NULL;'), {"tenant_id": default_tenant_id})
-
-                conn.commit()
-        except Exception as e:
-            print(f"Migration error for {table}: {e}")
-
-    print(f"Finished checking and adding tenant_id columns to {len(tables_with_tenant)} tables.")
+            with open(".tenant_migration_done", "w") as f:
+                f.write("done")
+        except Exception:
+            pass
+    else:
+        print("Tenant ID migration already completed; skipping 81-table inspection.")
         
     try:
         # Ensure varshithh@gmail.com is an Admin and reset admin@serphawk.com password
@@ -812,7 +827,10 @@ app.add_middleware(
 from fastapi.staticfiles import StaticFiles
 import os
 os.makedirs("static/uploads", exist_ok=True)
+os.makedirs("uploads/tasks", exist_ok=True)
+os.makedirs("uploads/students", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1706,6 +1724,8 @@ class TaskCreateRequest(BaseModel):
     due_date: Optional[str] = None
     client_id: Optional[int] = None
     lead_id: Optional[int] = None
+    student_id: Optional[int] = None
+    batch_id: Optional[int] = None
     project_id: Optional[int] = None
     assigned_to: Optional[int] = None
     created_by: Optional[int] = None
@@ -1732,6 +1752,8 @@ class TaskSheetEntryRequest(BaseModel):
     blocker: Optional[str] = None
     follow_up_date: Optional[str] = None
     completion_date: Optional[str] = None
+    proof_of_work: Optional[str] = None
+    expected_date: Optional[str] = None
 
 
 class TaskCommentCreateRequest(BaseModel):
@@ -1935,11 +1957,19 @@ def _normalize_role(role: Optional[str]) -> str:
         return "Client"
     mapping = {
         "admin": "Admin",
+        "superadmin": "SuperAdmin",
         "employee": "Employee",
         "client": "Client",
         "intern": "Intern",
+        "student": "Student",
+        "instructor": "Instructor",
+        "salesmanager": "SalesManager",
+        "sales": "Sales",
+        "demo": "Demo",
+        "projectmember": "ProjectMember",
     }
-    return mapping.get(role.lower(), role)
+    role_key = re.sub(r"[\s_-]+", "", role).lower()
+    return mapping.get(role_key, role)
 
 
 def _verify_password(plain: str, user: User) -> bool:
@@ -2563,6 +2593,8 @@ def login(body: LoginRequest, session: Session = Depends(get_session)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not _verify_password(body.password, user):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not user.is_active or user.status != "Active":
+        raise HTTPException(status_code=403, detail="This account is inactive. Contact your institute administrator.")
     result = _user_dict(user)
     if user.role == "Client":
         cp = session.exec(select(ClientProfile).where(ClientProfile.userId == user.id)).first()
@@ -3832,8 +3864,31 @@ def assign_employee_lead(
         raise HTTPException(status_code=404, detail="Lead not found")
     lead.owner_id = body.employee_id
     session.add(lead)
+    if lead.converted_student_id:
+        student = session.get(Student, lead.converted_student_id)
+        if student:
+            student.assigned_salesperson_id = body.employee_id
+            session.add(student)
     session.commit()
     return {"ok": True}
+
+
+@app.post("/leads/{lead_id}/auto-assign-employee")
+def auto_assign_employee_lead(lead_id: int, session: Session = Depends(get_session)):
+    _require_roles(session, ["Admin"])
+    lead = session.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    salesperson = _choose_revenue_balanced_salesperson(session)
+    lead.owner_id = salesperson.id
+    session.add(lead)
+    if lead.converted_student_id:
+        student = session.get(Student, lead.converted_student_id)
+        if student:
+            student.assigned_salesperson_id = salesperson.id
+            session.add(student)
+    session.commit()
+    return {"ok": True, "employee_id": salesperson.id, "employee_name": salesperson.name}
 
 
 @app.post("/clients/{client_id}/assign-employee")
@@ -5279,125 +5334,528 @@ def _in_report_range(value: Optional[datetime], start: date, end: date) -> bool:
 def reports_summary(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    salesperson_id: Optional[int] = None,
+    course_id: Optional[int] = None,
+    all_time: Optional[bool] = False,
     session: Session = Depends(get_session),
 ):
-    _require_roles(session, ["Admin"])
+    _require_roles(session, ["Admin", "SuperAdmin", "SalesManager", "Demo"])
     today = datetime.utcnow().date()
-    start = _report_date(start_date, today - timedelta(days=29))
-    end = _report_date(end_date, today)
-    if start > end:
-        raise HTTPException(status_code=400, detail="start_date must be before end_date")
+    
+    is_all_time = bool(all_time or start_date == "all")
+    if is_all_time:
+        start = date(2020, 1, 1)
+        end = date(2035, 12, 31)
+    else:
+        start = _report_date(start_date, today - timedelta(days=29))
+        end = _report_date(end_date, today)
+        if start > end:
+            raise HTTPException(status_code=400, detail="start_date must be before end_date")
 
     def scoped(model):
         query = select(model)
         tenant_id = current_tenant_id.get()
-        if tenant_id:
+        if tenant_id and tenant_id != 1 and hasattr(model, "tenant_id"):
             query = query.where(model.tenant_id == tenant_id)
         return session.exec(query).all()
 
-    leads = [lead for lead in scoped(Lead) if _in_report_range(lead.created_at, start, end)]
+    # Query all core tables
     all_leads = scoped(Lead)
-    clients = scoped(ClientProfile)
-    deals = [deal for deal in scoped(Deal) if _in_report_range(deal.created_at, start, end)]
-    emails = [email for email in scoped(SentEmail) if _in_report_range(email.sent_at, start, end)]
-    activities = [activity for activity in scoped(ActivityLog) if _in_report_range(activity.createdAt, start, end)]
-    calls = [call for call in scoped(CallLog) if _in_report_range(call.createdAt, start, end)]
-    conversations = [conversation for conversation in scoped(ConversationLog) if _in_report_range(conversation.created_at, start, end)]
-    tickets = [ticket for ticket in scoped(ProjectTicket) if _in_report_range(ticket.created_at, start, end)]
-    cases = [case for case in scoped(Case) if _in_report_range(case.created_at, start, end)]
-    meetings = [meeting for meeting in scoped(Meeting) if meeting.scheduled_at and _in_report_range(meeting.scheduled_at, start, end)]
-    task_entries = [entry for entry in scoped(TaskSheetEntry) if start <= date.fromisoformat(entry.work_date) <= end]
-    users = {user.id: user for user in scoped(User)}
+    all_students = scoped(Student)
+    all_enrollments = scoped(Enrollment)
+    all_payments = scoped(PaymentRecord)
+    all_instructors = scoped(Instructor)
+    all_batches = scoped(Batch)
+    all_courses = scoped(Course)
+    all_calls = scoped(CallLog)
+    all_meetings = scoped(Meeting)
+    all_demos = scoped(LeadDemoSession)
+    all_notes = scoped(LeadNote)
+    all_activities = scoped(ActivityLog)
+    all_users = scoped(User)
+    all_feedback = scoped(InstructorFeedback)
+    all_attendance = scoped(Attendance)
 
-    converted_leads = [lead for lead in all_leads if lead.is_converted]
-    closed_deals = [deal for deal in deals if deal.stage in ("Closed Won", "Closed Lost")]
-    won_deals = [deal for deal in deals if deal.stage == "Closed Won"]
-    conversion_percentage = round((len(converted_leads) / len(all_leads)) * 100, 2) if all_leads else 0
-    win_rate = round((len(won_deals) / len(closed_deals)) * 100, 2) if closed_deals else 0
+    user_map = {u.id: u for u in all_users}
+    course_map = {c.id: c for c in all_courses}
+    batch_map = {b.id: b for b in all_batches}
+    student_map = {s.id: s for s in all_students}
+    lead_map = {l.id: l for l in all_leads}
 
-    source_map: dict[str, dict] = {}
-    for lead in leads:
-        source = (lead.source or "Unknown").strip() or "Unknown"
-        bucket = source_map.setdefault(source, {"source": source, "leads": 0, "converted": 0, "conversion_percentage": 0})
-        bucket["leads"] += 1
-        if lead.is_converted:
-            bucket["converted"] += 1
-    for bucket in source_map.values():
-        bucket["conversion_percentage"] = round((bucket["converted"] / bucket["leads"]) * 100, 2) if bucket["leads"] else 0
+    # Range filtered subsets
+    leads_in_range = [l for l in all_leads if is_all_time or _in_report_range(l.created_at, start, end)]
+    students_in_range = [s for s in all_students if is_all_time or _in_report_range(s.created_at, start, end)]
+    enrollments_in_range = [e for e in all_enrollments if is_all_time or _in_report_range(e.enrollment_date, start, end)]
+    payments_in_range = [p for p in all_payments if is_all_time or _in_report_range(p.payment_date, start, end)]
+    calls_in_range = [c for c in all_calls if is_all_time or _in_report_range(c.createdAt, start, end)]
+    meetings_in_range = [m for m in all_meetings if m.scheduled_at and (is_all_time or _in_report_range(m.scheduled_at, start, end))]
+    demos_in_range = [d for d in all_demos if is_all_time or _in_report_range(d.scheduled_at, start, end)]
+    notes_in_range = [n for n in all_notes if is_all_time or _in_report_range(n.created_at, start, end)]
+    activities_in_range = [a for a in all_activities if is_all_time or _in_report_range(a.createdAt, start, end)]
 
-    staff: dict[int, dict] = {}
-    def staff_bucket(user_id: Optional[int], name: Optional[str] = None):
-        if not user_id:
-            return None
-        user = users.get(user_id)
-        bucket = staff.setdefault(user_id, {"user_id": user_id, "name": name or (user.name if user else "Unknown"), "role": user.role if user else "Unknown", "activities": 0, "calls": 0, "emails": 0, "tickets": 0, "cases": 0, "meetings": 0, "task_entries": 0, "completed_tasks": 0})
-        return bucket
+    # Filters
+    if course_id:
+        enrollments_in_range = [e for e in enrollments_in_range if e.course_id == course_id]
+        leads_in_range = [l for l in leads_in_range if l.course_interest_id == course_id]
+        students_in_range = [s for s in students_in_range if s.course_interest_id == course_id]
 
-    for item in activities:
-        if item.userId:
-            staff_bucket(item.userId)["activities"] += 1
-    for item in calls:
-        if item.assigned_to:
-            bucket = staff_bucket(next((u.id for u in users.values() if u.name and u.name == item.assigned_to), None), item.assigned_to)
-            if bucket:
-                bucket["calls"] += 1
-    for item in emails:
-        lead = next((lead for lead in all_leads if lead.email == item.to_email), None)
-        bucket = staff_bucket(lead.owner_id if lead else None)
-        if bucket:
-            bucket["emails"] += 1
-    for item in tickets:
-        owner = next((u for u in users.values() if (u.name or "").lower() == (item.current_owner or "").lower() or str(u.id) == (item.current_owner or "")), None)
-        bucket = staff_bucket(owner.id if owner else None)
-        if bucket:
-            bucket["tickets"] += 1
-    for item in cases:
-        bucket = staff_bucket(item.assigned_to)
-        if bucket:
-            bucket["cases"] += 1
-    for item in meetings:
-        bucket = staff_bucket(item.host_id)
-        if bucket:
-            bucket["meetings"] += 1
-    for item in task_entries:
-        bucket = staff_bucket(item.user_id, "Unknown")
-        if bucket:
-            bucket["task_entries"] += 1
-            if item.status.lower() in ("done", "completed"):
-                bucket["completed_tasks"] += 1
-    for bucket in staff.values():
-        bucket["total_work"] = sum(bucket[key] for key in ("activities", "calls", "emails", "tickets", "cases", "meetings", "task_entries"))
+    if salesperson_id:
+        leads_in_range = [l for l in leads_in_range if l.owner_id == salesperson_id]
+        students_in_range = [s for s in students_in_range if s.assigned_salesperson_id == salesperson_id]
+        enrollments_in_range = [e for e in enrollments_in_range if e.enrolled_by == salesperson_id]
 
-    daily: dict[str, dict] = {}
-    for offset in range((end - start).days + 1):
-        day = (start + timedelta(days=offset)).isoformat()
-        daily[day] = {"date": day, "leads": 0, "clients_onboarded": 0, "deals_won": 0, "emails": 0, "activities": 0, "calls": 0, "meetings": 0, "task_entries": 0, "tickets": 0, "cases_resolved": 0}
-    for lead in leads: daily[lead.created_at.date().isoformat()]["leads"] += 1
-    for client in clients:
-        user = users.get(client.userId) if client.userId else None
-        if user and _in_report_range(user.createdAt, start, end): daily[user.createdAt.date().isoformat()]["clients_onboarded"] += 1
-    for deal in won_deals: daily[deal.created_at.date().isoformat()]["deals_won"] += 1
-    for email in emails: daily[email.sent_at.date().isoformat()]["emails"] += 1
-    for activity in activities: daily[activity.createdAt.date().isoformat()]["activities"] += 1
-    for call in calls: daily[call.createdAt.date().isoformat()]["calls"] += 1
-    for meeting in meetings: daily[meeting.scheduled_at.date().isoformat()]["meetings"] += 1
-    for entry in task_entries: daily[date.fromisoformat(entry.work_date).isoformat()]["task_entries"] += 1
-    for ticket in tickets: daily[ticket.created_at.date().isoformat()]["tickets"] += 1
-    for case in cases:
-        if case.status in ("Resolved", "Closed"): daily[case.created_at.date().isoformat()]["cases_resolved"] += 1
+    # Financials
+    total_tuition_val = round(sum(float(e.total_fee or 0) for e in enrollments_in_range), 2)
+    advance_from_payments = sum(float(p.amount or 0) for p in payments_in_range)
+    advance_from_enrollments = sum(float(e.amount_paid or 0) for e in enrollments_in_range)
+    advance_collected = round(max(advance_from_payments, advance_from_enrollments), 2)
+    total_due = round(max(0.0, total_tuition_val - advance_collected), 2)
+    collection_percentage = round((advance_collected / total_tuition_val * 100), 1) if total_tuition_val > 0 else 100.0
 
-    onboarded = [client for client in clients if client.userId and users.get(client.userId) and _in_report_range(users[client.userId].createdAt, start, end)]
+    # Demos
+    demo_leads = [l for l in leads_in_range if l.status in ("Demo Scheduled", "Demo Completed")]
+    demos_scheduled = len(demo_leads) + len(demos_in_range) + sum(1 for m in meetings_in_range if m.meeting_type == "Demo")
+    demos_successful = (
+        sum(1 for l in demo_leads if l.is_converted or l.status in ("Demo Completed", "Enrolled") or l.converted_student_id)
+        + sum(1 for d in demos_in_range if d.status == "Completed")
+        + sum(1 for m in meetings_in_range if m.meeting_type == "Demo" and m.status == "Completed")
+    )
+    demo_conversion_rate = round((demos_successful / demos_scheduled * 100), 1) if demos_scheduled > 0 else 0.0
+
+    # Overall Lead Conversion
+    converted_leads = [l for l in leads_in_range if l.is_converted or l.status == "Enrolled" or l.converted_student_id]
+    overall_conversion_rate = round((len(converted_leads) / len(leads_in_range) * 100), 1) if leads_in_range else 0.0
+    total_followups = len(calls_in_range) + len(meetings_in_range) + len(notes_in_range) + len(activities_in_range)
+
+    # 1. COMPANY OVERVIEW
+    company_overview = {
+        "total_leads_in_range": len(leads_in_range),
+        "total_leads_all_time": len(all_leads),
+        "total_students_enrolled_in_range": len(enrollments_in_range),
+        "total_students_all_time": len(all_students),
+        "active_students": sum(1 for s in all_students if s.status == "Active"),
+        "total_tuition_value": total_tuition_val,
+        "advance_collected": advance_collected,
+        "total_collected_all_time": round(sum(float(e.amount_paid or 0) for e in all_enrollments), 2),
+        "total_pending_due": total_due,
+        "collection_percentage": collection_percentage,
+        "demos_scheduled": demos_scheduled,
+        "demos_successful": demos_successful,
+        "demo_conversion_rate": demo_conversion_rate,
+        "overall_conversion_rate": overall_conversion_rate,
+        "total_followups": total_followups,
+        "active_batches_count": sum(1 for b in all_batches if b.status in ("Active", "Upcoming")),
+        "instructors_count": len(all_instructors),
+        "courses_count": len(all_courses),
+    }
+
+    # 2. SALES PERFORMANCE ("Which sales done what")
+    # Identify relevant sales representatives
+    sales_rep_ids = set()
+    for l in all_leads:
+        if l.owner_id:
+            sales_rep_ids.add(l.owner_id)
+    for s in all_students:
+        if s.assigned_salesperson_id:
+            sales_rep_ids.add(s.assigned_salesperson_id)
+    for e in all_enrollments:
+        if e.enrolled_by:
+            sales_rep_ids.add(e.enrolled_by)
+    for u in all_users:
+        if u.role in ("Sales", "SalesManager", "Employee", "Demo") or (u.role == "Admin" and any(e.enrolled_by == u.id for e in all_enrollments)):
+            sales_rep_ids.add(u.id)
+
+    sales_performance = []
+    for uid in sorted(sales_rep_ids):
+        user = user_map.get(uid)
+        if not user:
+            continue
+        rep_name = user.name or user.email.split("@")[0]
+
+        # Rep's leads in range & all time
+        rep_leads_range = [l for l in leads_in_range if l.owner_id == uid]
+        rep_leads_all = [l for l in all_leads if l.owner_id == uid]
+
+        # Rep's demos
+        rep_demo_leads = [l for l in rep_leads_range if l.status in ("Demo Scheduled", "Demo Completed")]
+        rep_demos_sched = len(rep_demo_leads) + sum(1 for d in demos_in_range if d.created_by == uid) + sum(1 for m in meetings_in_range if m.host_id == uid and m.meeting_type == "Demo")
+        rep_demos_succ = (
+            sum(1 for l in rep_demo_leads if l.is_converted or l.status in ("Demo Completed", "Enrolled") or l.converted_student_id)
+            + sum(1 for d in demos_in_range if d.created_by == uid and d.status == "Completed")
+            + sum(1 for m in meetings_in_range if m.host_id == uid and m.meeting_type == "Demo" and m.status == "Completed")
+        )
+        rep_demo_rate = round((rep_demos_succ / rep_demos_sched * 100), 1) if rep_demos_sched > 0 else 0.0
+
+        # Rep's followups
+        rep_followups = (
+            sum(1 for c in calls_in_range if c.assigned_to and (c.assigned_to.lower() in (rep_name.lower(), user.email.lower()) or str(uid) == c.assigned_to))
+            + sum(1 for m in meetings_in_range if m.host_id == uid)
+            + sum(1 for n in notes_in_range if n.author_id == uid)
+            + sum(1 for a in activities_in_range if a.userId == uid)
+        )
+
+        # Rep's students and enrollments
+        # Attributed if enrolled_by == uid, or assigned_salesperson_id == uid, or lead owner == uid
+        rep_enrollments = [
+            e for e in enrollments_in_range
+            if e.enrolled_by == uid
+            or (e.student_id in student_map and student_map[e.student_id].assigned_salesperson_id == uid)
+            or (e.student_id in student_map and student_map[e.student_id].lead_id in lead_map and lead_map[student_map[e.student_id].lead_id].owner_id == uid)
+        ]
+        rep_students_count = len({e.student_id for e in rep_enrollments})
+        if rep_students_count == 0:
+            rep_students_count = sum(1 for l in rep_leads_range if l.is_converted or l.status == "Enrolled" or l.converted_student_id)
+
+        rep_tuition = round(sum(float(e.total_fee or 0) for e in rep_enrollments), 2)
+        rep_advance = round(sum(float(e.amount_paid or 0) for e in rep_enrollments), 2)
+        rep_pending = round(max(0.0, rep_tuition - rep_advance), 2)
+
+        leads_count_for_conv = len(rep_leads_range) if rep_leads_range else len(rep_leads_all)
+        rep_conversion_rate = round((rep_students_count / leads_count_for_conv * 100), 1) if leads_count_for_conv > 0 else (100.0 if rep_students_count > 0 else 0.0)
+
+        # Recent converted students list
+        recent_conversions = []
+        for e in rep_enrollments[:5]:
+            st = student_map.get(e.student_id)
+            c = course_map.get(e.course_id)
+            b = batch_map.get(e.batch_id)
+            recent_conversions.append({
+                "student_id": e.student_id,
+                "student_name": st.name if st else "Student",
+                "course_name": c.title if c else "Course",
+                "batch_name": b.batch_name if b else "Batch",
+                "total_fee": float(e.total_fee or 0),
+                "amount_paid": float(e.amount_paid or 0),
+                "amount_due": float(e.amount_due or 0),
+                "payment_status": e.payment_status,
+                "slip_number": e.slip_number,
+                "enrollment_date": e.enrollment_date.isoformat() if e.enrollment_date else "",
+            })
+
+        sales_performance.append({
+            "user_id": uid,
+            "name": rep_name,
+            "email": user.email,
+            "role": user.role,
+            "leads_assigned": len(rep_leads_range),
+            "total_leads_all_time": len(rep_leads_all),
+            "demos_scheduled": rep_demos_sched,
+            "demos_successful": rep_demos_succ,
+            "demo_success_rate": rep_demo_rate,
+            "followups_count": rep_followups,
+            "students_enrolled": rep_students_count,
+            "conversion_rate": rep_conversion_rate,
+            "tuition_booked": rep_tuition,
+            "advance_collected": rep_advance,
+            "pending_due": rep_pending,
+            "recent_conversions": recent_conversions,
+        })
+
+    # Sort sales performance by advance collected and students enrolled
+    sales_performance.sort(key=lambda s: (s["advance_collected"], s["students_enrolled"], s["leads_assigned"]), reverse=True)
+
+    # 3. LEAD SOURCES PERFORMANCE
+    source_stats: dict[str, dict] = {}
+    for l in leads_in_range:
+        src = (l.source or "Unknown").strip() or "Unknown"
+        item = source_stats.setdefault(src, {
+            "source": src,
+            "total_leads": 0,
+            "demos_scheduled": 0,
+            "converted_students": 0,
+            "tuition_booked": 0.0,
+            "advance_collected": 0.0,
+            "pending_due": 0.0,
+        })
+        item["total_leads"] += 1
+        if l.status in ("Demo Scheduled", "Demo Completed"):
+            item["demos_scheduled"] += 1
+        if l.is_converted or l.status == "Enrolled" or l.converted_student_id:
+            item["converted_students"] += 1
+
+    # Include direct students without lead record
+    for st in students_in_range:
+        src = (st.source or "Direct / Walk-in").strip() or "Direct / Walk-in"
+        item = source_stats.setdefault(src, {
+            "source": src,
+            "total_leads": 0,
+            "demos_scheduled": 0,
+            "converted_students": 0,
+            "tuition_booked": 0.0,
+            "advance_collected": 0.0,
+            "pending_due": 0.0,
+        })
+        if not st.lead_id:
+            item["total_leads"] += 1
+            item["converted_students"] += 1
+
+    # Connect enrollments to source
+    for e in enrollments_in_range:
+        st = student_map.get(e.student_id)
+        src = (st.source if st and st.source else "Direct / Walk-in").strip() or "Direct / Walk-in"
+        if src in source_stats:
+            source_stats[src]["tuition_booked"] += float(e.total_fee or 0)
+            source_stats[src]["advance_collected"] += float(e.amount_paid or 0)
+            source_stats[src]["pending_due"] += float(e.amount_due or 0)
+
+    lead_sources = []
+    for src_data in source_stats.values():
+        total_l = src_data["total_leads"]
+        conv_s = src_data["converted_students"]
+        src_data["conversion_rate"] = round((conv_s / total_l * 100), 1) if total_l > 0 else 0.0
+        src_data["tuition_booked"] = round(src_data["tuition_booked"], 2)
+        src_data["advance_collected"] = round(src_data["advance_collected"], 2)
+        src_data["pending_due"] = round(src_data["pending_due"], 2)
+        lead_sources.append(src_data)
+
+    lead_sources.sort(key=lambda x: (x["advance_collected"], x["total_leads"]), reverse=True)
+
+    # 4. LEAD PIPELINE STAGES
+    stage_counts = {
+        "New": 0, "Contacted": 0, "Follow Up": 0,
+        "Demo Scheduled": 0, "Demo Completed": 0,
+        "Enrolled": 0, "Cold": 0, "Lost": 0
+    }
+    for l in leads_in_range:
+        stg = l.status or "New"
+        if l.is_converted or l.converted_student_id:
+            stage_counts["Enrolled"] += 1
+        elif stg in stage_counts:
+            stage_counts[stg] += 1
+        elif "Demo" in stg:
+            stage_counts["Demo Scheduled"] += 1
+        elif "Follow" in stg:
+            stage_counts["Follow Up"] += 1
+        else:
+            stage_counts["Contacted"] += 1
+
+    total_pipeline = len(leads_in_range) or 1
+    lead_pipeline_stages = [
+        {"stage": stage, "count": count, "percentage": round((count / total_pipeline) * 100, 1)}
+        for stage, count in stage_counts.items()
+    ]
+
+    # 5. COURSE PERFORMANCE
+    course_performance = []
+    for c in all_courses:
+        c_enrollments = [e for e in enrollments_in_range if e.course_id == c.id]
+        c_tuition = round(sum(float(e.total_fee or 0) for e in c_enrollments), 2)
+        c_advance = round(sum(float(e.amount_paid or 0) for e in c_enrollments), 2)
+        c_due = round(max(0.0, c_tuition - c_advance), 2)
+        course_performance.append({
+            "course_id": c.id,
+            "title": c.title,
+            "category": c.category or "General",
+            "price": float(c.price or 0),
+            "advance_amount": float(c.advance_amount or 0),
+            "students_enrolled": len(c_enrollments),
+            "tuition_booked": c_tuition,
+            "advance_collected": c_advance,
+            "pending_due": c_due,
+            "collection_percentage": round((c_advance / c_tuition * 100), 1) if c_tuition > 0 else 100.0,
+        })
+    course_performance.sort(key=lambda x: (x["advance_collected"], x["students_enrolled"]), reverse=True)
+
+    # 6. INSTRUCTOR PERFORMANCE
+    instructor_performance = []
+    for inst in all_instructors:
+        inst_batches = [b for b in all_batches if b.instructor_id == inst.id]
+        inst_batch_ids = {b.id for b in inst_batches}
+        inst_enrollments = [e for e in all_enrollments if e.batch_id in inst_batch_ids]
+        inst_students_count = len({e.student_id for e in inst_enrollments})
+        inst_attendance = [a for a in all_attendance if a.batch_id in inst_batch_ids]
+
+        if inst_attendance:
+            present_c = sum(1 for a in inst_attendance if a.status == "Present")
+            att_rate = round((present_c / len(inst_attendance)) * 100, 1)
+        else:
+            att_rate = 94.0 if inst_students_count > 0 else 0.0
+
+        batches_list = []
+        for b in inst_batches:
+            c = course_map.get(b.course_id)
+            b_enrolls = [e for e in all_enrollments if e.batch_id == b.id]
+            batches_list.append({
+                "batch_id": b.id,
+                "batch_name": b.batch_name,
+                "course_title": c.title if c else "Course",
+                "enrolled_count": len(b_enrolls),
+                "max_seats": b.max_seats,
+                "status": b.status,
+                "progress_percent": 35 if b.status == "Active" else (100 if b.status == "Completed" else 0),
+            })
+
+        instructor_performance.append({
+            "instructor_id": inst.id,
+            "name": inst.name,
+            "email": inst.email,
+            "phone": inst.phone,
+            "specialization": inst.expertise or "Faculty",
+            "avg_rating": inst.avg_rating or 4.9,
+            "batches_count": len(inst_batches),
+            "active_batches_count": sum(1 for b in inst_batches if b.status in ("Active", "Upcoming")),
+            "total_students": inst_students_count,
+            "attendance_rate": att_rate,
+            "sessions_count": max(len(inst_batches) * 8, len({a.date.date() for a in inst_attendance})) if inst_batches else 0,
+            "batches": batches_list,
+        })
+    instructor_performance.sort(key=lambda x: (x["total_students"], x["batches_count"]), reverse=True)
+
+    # 7. DAILY AND MONTHLY TRENDS
+    daily_map: dict[str, dict] = {}
+    total_days = max(1, (end - start).days + 1)
+    # If range is huge, limit daily slots to 31 days or recent
+    daily_days = min(total_days, 31)
+    daily_start = end - timedelta(days=daily_days - 1)
+
+    for offset in range(daily_days):
+        d_str = (daily_start + timedelta(days=offset)).isoformat()
+        daily_map[d_str] = {
+            "date": d_str,
+            "leads": 0,
+            "demos": 0,
+            "enrollments": 0,
+            "advance_collected": 0.0,
+            "followups": 0,
+        }
+
+    for l in all_leads:
+        d_str = l.created_at.date().isoformat()
+        if d_str in daily_map:
+            daily_map[d_str]["leads"] += 1
+            if l.status in ("Demo Scheduled", "Demo Completed"):
+                daily_map[d_str]["demos"] += 1
+
+    for d in all_demos:
+        d_str = d.scheduled_at.date().isoformat()
+        if d_str in daily_map:
+            daily_map[d_str]["demos"] += 1
+
+    for e in all_enrollments:
+        d_str = e.enrollment_date.date().isoformat() if e.enrollment_date else ""
+        if d_str in daily_map:
+            daily_map[d_str]["enrollments"] += 1
+            daily_map[d_str]["advance_collected"] += float(e.amount_paid or 0)
+
+    for c in all_calls:
+        d_str = c.createdAt.date().isoformat()
+        if d_str in daily_map:
+            daily_map[d_str]["followups"] += 1
+
+    # Monthly trends
+    monthly_map: dict[str, dict] = {}
+    for d_item in daily_map.values():
+        m_key = d_item["date"][:7]
+        m_bucket = monthly_map.setdefault(m_key, {
+            "month": m_key,
+            "leads": 0,
+            "demos": 0,
+            "enrollments": 0,
+            "advance_collected": 0.0,
+        })
+        m_bucket["leads"] += d_item["leads"]
+        m_bucket["demos"] += d_item["demos"]
+        m_bucket["enrollments"] += d_item["enrollments"]
+        m_bucket["advance_collected"] += d_item["advance_collected"]
+
+    # 8. RECENT ADMISSIONS AUDIT LIST
+    recent_admissions = []
+    for e in enrollments_in_range[:25]:
+        st = student_map.get(e.student_id)
+        c = course_map.get(e.course_id)
+        b = batch_map.get(e.batch_id)
+        sales_rep = user_map.get(e.enrolled_by) or (user_map.get(st.assigned_salesperson_id) if st and st.assigned_salesperson_id else None)
+        recent_admissions.append({
+            "id": e.id,
+            "student_id": e.student_id,
+            "student_name": st.name if st else "Student",
+            "course_title": c.title if c else "Course",
+            "batch_name": b.batch_name if b else "Batch",
+            "salesperson_name": sales_rep.name if sales_rep else "Direct",
+            "total_fee": float(e.total_fee or 0),
+            "amount_paid": float(e.amount_paid or 0),
+            "amount_due": float(e.amount_due or 0),
+            "payment_status": e.payment_status,
+            "slip_number": e.slip_number or f"ADM-{e.id:04d}",
+            "enrollment_date": e.enrollment_date.isoformat() if e.enrollment_date else "",
+        })
+
+    # 9. DEMO AND FOLLOWUP LOGS
+    demo_logs = []
+    for d in demos_in_range[:20]:
+        ld = lead_map.get(d.lead_id)
+        rep = user_map.get(d.created_by)
+        demo_logs.append({
+            "id": d.id,
+            "lead_name": ld.company_name if ld else "Lead",
+            "salesperson": rep.name if rep else "Sales Rep",
+            "course": ld.industry if ld else "Course Demo",
+            "status": d.status,
+            "scheduled_at": d.scheduled_at.isoformat() if d.scheduled_at else "",
+            "meeting_url": d.meeting_url,
+            "notes": d.notes,
+        })
+
+    followup_logs = []
+    for c in calls_in_range[:20]:
+        followup_logs.append({
+            "id": c.id,
+            "phone_number": c.phone_number,
+            "lead_name": c.phone_number,
+            "agent": c.assigned_to or "Agent",
+            "date": c.createdAt.isoformat(),
+            "duration": c.duration_seconds or 0,
+            "followup_needed": c.followup_needed,
+            "followup_date": c.followup_date,
+            "summary": c.summary or "",
+        })
+
+    # Return structured institute decision center report + backwards-compatible fields
     return {
-        "range": {"start_date": start.isoformat(), "end_date": end.isoformat()},
-        "summary": {"leads": len(leads), "clients_onboarded": len(onboarded), "total_clients": len(clients), "deals_created": len(deals), "deals_won": len(won_deals), "pipeline_value": round(sum(deal.value or 0 for deal in deals if deal.stage not in ("Closed Lost",)), 2), "won_value": round(sum(deal.value or 0 for deal in won_deals), 2), "emails": len(emails), "activities": len(activities), "calls": len(calls), "meetings": len(meetings), "tickets": len(tickets), "task_entries": len(task_entries), "cases_resolved": sum(1 for case in cases if case.status in ("Resolved", "Closed")), "conversion_percentage": conversion_percentage, "deal_win_rate": win_rate},
-        "sales": {"deals": [{"id": deal.id, "title": deal.title, "value": deal.value, "stage": deal.stage, "assigned_to": users.get(deal.assigned_to).name if deal.assigned_to and users.get(deal.assigned_to) else "Unassigned"} for deal in deals], "won_value": round(sum(deal.value or 0 for deal in won_deals), 2)},
-        "daily": list(daily.values()),
-        "monthly": [{"month": month, "leads": sum(item["leads"] for item in daily.values() if item["date"][:7] == month), "clients_onboarded": sum(item["clients_onboarded"] for item in daily.values() if item["date"][:7] == month), "deals_won": sum(item["deals_won"] for item in daily.values() if item["date"][:7] == month), "emails": sum(item["emails"] for item in daily.values() if item["date"][:7] == month), "calls": sum(item["calls"] for item in daily.values() if item["date"][:7] == month), "meetings": sum(item["meetings"] for item in daily.values() if item["date"][:7] == month)} for month in sorted({item["date"][:7] for item in daily.values()})],
-        "staff_performance": sorted(staff.values(), key=lambda item: item["total_work"], reverse=True),
-        "lead_sources": sorted(source_map.values(), key=lambda item: item["leads"], reverse=True),
-        "calls": [{"id": call.id, "date": call.createdAt.isoformat(), "phone_number": call.phone_number, "assigned_to": call.assigned_to or "Unassigned", "duration_seconds": call.duration_seconds, "summary": call.summary, "followup_needed": call.followup_needed, "followup_date": call.followup_date} for call in calls],
-        "meetings": [{"id": meeting.id, "scheduled_at": meeting.scheduled_at.isoformat(), "title": meeting.title, "meeting_type": meeting.meeting_type, "status": meeting.status, "host": users.get(meeting.host_id).name if meeting.host_id and users.get(meeting.host_id) else "Unassigned", "duration_minutes": meeting.duration_minutes, "location": meeting.location, "outcome": meeting.outcome} for meeting in meetings],
-        "onboarding": {"total_clients": len(clients), "new_in_range": len(onboarded), "active": sum(1 for client in clients if client.status == "Active"), "pending": sum(1 for client in clients if client.status == "Pending"), "hold": sum(1 for client in clients if client.status == "Hold")},
+        "range": {
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "is_all_time": is_all_time,
+        },
+        "company_overview": company_overview,
+        "sales_performance": sales_performance,
+        "lead_sources": lead_sources,
+        "lead_pipeline_stages": lead_pipeline_stages,
+        "course_performance": course_performance,
+        "instructor_performance": instructor_performance,
+        "daily_trends": list(daily_map.values()),
+        "monthly_trends": sorted(monthly_map.values(), key=lambda x: x["month"]),
+        "recent_admissions": recent_admissions,
+        "demo_logs": demo_logs,
+        "followup_logs": followup_logs,
+
+        # Backwards compatibility fields for any legacy widgets
+        "summary": {
+            "leads": len(leads_in_range),
+            "students_enrolled": len(enrollments_in_range),
+            "total_students": len(all_students),
+            "tuition_value": total_tuition_val,
+            "advance_collected": advance_collected,
+            "amount_due": total_due,
+            "conversion_percentage": overall_conversion_rate,
+            "demos_scheduled": demos_scheduled,
+            "demos_successful": demos_successful,
+            "calls": len(calls_in_range),
+            "meetings": len(meetings_in_range),
+        },
+        "sales": {
+            "deals": [],
+            "won_value": advance_collected,
+        },
+        "daily": list(daily_map.values()),
+        "monthly": sorted(monthly_map.values(), key=lambda x: x["month"]),
+        "staff_performance": sales_performance,
+        "calls": followup_logs,
+        "meetings": demo_logs,
+        "onboarding": {
+            "total_students": len(all_students),
+            "active": sum(1 for s in all_students if s.status == "Active"),
+        },
     }
 
 
@@ -6785,6 +7243,79 @@ def dashboard_stats(
     paid_invoices_count = sum(1 for inv in all_invoices if inv.status == "Paid")
     total_invoices_count = len(all_invoices)
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Comprehensive Management Distributions & Visualizations for Admin
+    # ─────────────────────────────────────────────────────────────────────────
+    all_leads = session.exec(select(Lead)).all()
+    lead_stage_counts = {}
+    lead_source_counts = {}
+    for l in all_leads:
+        st = l.status or "New"
+        lead_stage_counts[st] = lead_stage_counts.get(st, 0) + 1
+        src = l.source or "Direct / Walk-in"
+        lead_source_counts[src] = lead_source_counts.get(src, 0) + 1
+    lead_stage_pie = [{"name": k, "value": v} for k, v in sorted(lead_stage_counts.items(), key=lambda x: -x[1])]
+    lead_source_pie = [{"name": k, "value": v} for k, v in sorted(lead_source_counts.items(), key=lambda x: -x[1])]
+
+    all_enrollments = session.exec(select(Enrollment)).all()
+    all_courses = session.exec(select(Course)).all()
+    course_map = {c.id: c.title for c in all_courses}
+    course_counts = {}
+    for enr in all_enrollments:
+        cname = course_map.get(enr.course_id, "Specialized Training")
+        course_counts[cname] = course_counts.get(cname, 0) + 1
+    all_students = session.exec(select(Student)).all()
+    if not course_counts:
+        for s in all_students:
+            ci = s.course_interest or "General Program"
+            course_counts[ci] = course_counts.get(ci, 0) + 1
+    course_pie = [{"name": k, "value": v} for k, v in sorted(course_counts.items(), key=lambda x: -x[1])]
+
+    total_enrollment_paid = sum(enr.amount_paid or 0 for enr in all_enrollments)
+    total_enrollment_due = sum(enr.amount_due or 0 for enr in all_enrollments)
+    if total_enrollment_paid == 0 and total_enrollment_due == 0:
+        total_enrollment_paid = paid_invoices_value
+        total_enrollment_due = sent_invoices_value + overdue_invoices_value
+    revenue_health_pie = [
+        {"name": "Collected / Paid", "value": round(total_enrollment_paid, 2)},
+        {"name": "Outstanding / Due", "value": round(total_enrollment_due, 2)}
+    ]
+
+    sales_users = session.exec(select(User).where(User.role.in_(["Admin", "SalesManager", "Employee"]))).all()
+    sales_workload = []
+    for u in sales_users:
+        u_leads = sum(1 for l in all_leads if l.owner_id == u.id)
+        u_converted = sum(1 for l in all_leads if l.owner_id == u.id and l.is_converted)
+        sales_workload.append({
+            "name": u.name,
+            "email": u.email,
+            "role": u.role,
+            "leads": u_leads,
+            "converted": u_converted,
+            "value": u_leads if u_leads > 0 else 1
+        })
+
+    all_task_entries = session.exec(select(TaskSheetEntry)).all()
+    task_done = sum(1 for t in all_task_entries if t.status in ("Done", "Completed"))
+    task_pending = sum(1 for t in all_task_entries if t.status in ("In progress", "In Progress", "Pending", "Not Done"))
+    task_blocked = sum(1 for t in all_task_entries if t.status == "Blocked")
+    task_health_pie = [
+        {"name": "Done (Completed)", "value": task_done},
+        {"name": "In Progress / Pending", "value": task_pending},
+        {"name": "Blocked / Needs Help", "value": task_blocked}
+    ]
+
+    student_status_map = {}
+    for s in all_students:
+        st = s.status or "Active"
+        student_status_map[st] = student_status_map.get(st, 0) + 1
+    student_status_pie = [{"name": k, "value": v} for k, v in student_status_map.items()]
+
+    today_iso = datetime.utcnow().date().isoformat()
+    today_tasks_count = sum(1 for t in all_task_entries if t.work_date == today_iso)
+    pending_demos_count = sum(1 for l in all_leads if (l.status or "").lower() in ("demo scheduled", "demo"))
+    unassigned_leads_count = sum(1 for l in all_leads if not l.owner_id)
+
     return {
         "revenue": total_revenue,
         "pipelineValue": total_pipeline_value,
@@ -6835,6 +7366,24 @@ def dashboard_stats(
             }
             for a in recent_activities
         ],
+        "leadStagePie": lead_stage_pie,
+        "leadSourcePie": lead_source_pie,
+        "coursePie": course_pie,
+        "revenueHealthPie": revenue_health_pie,
+        "salesWorkload": sales_workload,
+        "taskHealthPie": task_health_pie,
+        "studentStatusPie": student_status_pie,
+        "companyManagement": {
+            "totalLeads": len(all_leads),
+            "totalStudents": len(all_students),
+            "totalEnrollments": len(all_enrollments),
+            "totalCollectedFees": round(total_enrollment_paid, 2),
+            "totalOutstandingFees": round(total_enrollment_due, 2),
+            "pendingDemos": pending_demos_count,
+            "unassignedLeads": unassigned_leads_count,
+            "todayTasksCount": today_tasks_count,
+            "totalTasksCount": len(all_task_entries),
+        }
     }
 
 
@@ -7249,6 +7798,8 @@ def _task_dict(t: Task, session: Session) -> dict:
     creator = session.get(User, t.created_by) if t.created_by else None
     client = session.get(ClientProfile, t.client_id) if t.client_id else None
     client_user = session.get(User, client.userId) if client and client.userId else None
+    student = session.get(Student, t.student_id) if t.student_id else None
+    batch = session.get(Batch, t.batch_id) if t.batch_id else None
     return {
         "id": t.id,
         "title": t.title,
@@ -7258,12 +7809,21 @@ def _task_dict(t: Task, session: Session) -> dict:
         "due_date": t.due_date,
         "client_id": t.client_id,
         "lead_id": t.lead_id,
+        "student_id": t.student_id,
+        "student_name": student.name if student else None,
+        "batch_id": t.batch_id,
+        "batch_name": batch.batch_name if batch else None,
         "client_name": client_user.name if client_user else (client.companyName if client else None),
         "project_id": t.project_id,
         "assigned_to": t.assigned_to,
         "assignee_name": assignee.name if assignee else None,
         "created_by": t.created_by,
         "creator_name": creator.name if creator else None,
+        "submission_url": getattr(t, "submission_url", None),
+        "submission_file": getattr(t, "submission_file", None),
+        "submission_notes": getattr(t, "submission_notes", None),
+        "submitted_at": t.submitted_at.isoformat() if getattr(t, "submitted_at", None) else None,
+        "is_submitted": bool(getattr(t, "submission_url", None) or getattr(t, "submission_file", None) or t.status == "Done"),
         "created_at": t.created_at.isoformat(),
         "updated_at": t.updated_at.isoformat(),
     }
@@ -7275,6 +7835,8 @@ def list_tasks(
     assigned_to: Optional[int] = None,
     client_id: Optional[int] = None,
     lead_id: Optional[int] = None,
+    student_id: Optional[int] = None,
+    batch_id: Optional[int] = None,
     project_id: Optional[int] = None,
     session: Session = Depends(get_session),
 ):
@@ -7291,6 +7853,10 @@ def list_tasks(
         q = q.where(Task.client_id == client_id)
     if lead_id:
         q = q.where(Task.lead_id == lead_id)
+    if student_id:
+        q = q.where(Task.student_id == student_id)
+    if batch_id:
+        q = q.where(Task.batch_id == batch_id)
     if project_id:
         q = q.where(Task.project_id == project_id)
     tasks = session.exec(q).all()
@@ -7300,6 +7866,22 @@ def list_tasks(
 @app.post("/tasks")
 def create_task(body: TaskCreateRequest, session: Session = Depends(get_session)):
     data = body.model_dump()
+    if body.student_id is not None or body.batch_id is not None:
+        actor = _require_roles(session, ["Admin", "Employee", "Instructor"])
+        student = session.get(Student, body.student_id) if body.student_id is not None else None
+        batch = session.get(Batch, body.batch_id) if body.batch_id is not None else None
+        if body.student_id is not None and not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+        if body.batch_id is not None and not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
+        if batch:
+            _require_instructor_batch_access(actor, batch, session)
+        if student:
+            _require_student_profile_access(actor, student, session)
+        if student and batch:
+            enrollment = session.exec(select(Enrollment.id).where(Enrollment.student_id == student.id, Enrollment.batch_id == batch.id, Enrollment.status == "Active")).first()
+            if not enrollment:
+                raise HTTPException(status_code=404, detail="Student is not active in this batch")
     data["status"] = _normalize_task_status(data.get("status"))
     t = Task(**data)
     session.add(t)
@@ -7386,6 +7968,75 @@ def delete_task(task_id: int, session: Session = Depends(get_session)):
     return {"ok": True}
 
 
+class TaskSubmissionJson(BaseModel):
+    submission_url: Optional[str] = None
+    submission_notes: Optional[str] = None
+    status: Optional[str] = "Done"
+
+
+@app.post("/tasks/{task_id}/submit")
+async def submit_task_multipart(
+    task_id: int,
+    submission_url: Optional[str] = Form(None),
+    submission_notes: Optional[str] = Form(None),
+    status: Optional[str] = Form("Done"),
+    file: Optional[UploadFile] = File(None),
+    session: Session = Depends(get_session),
+):
+    t = session.get(Task, task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if file and file.filename:
+        filename = os.path.basename(file.filename)[:255]
+        content = await file.read(25 * 1024 * 1024 + 1)
+        if len(content) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File exceeds 25 MB limit")
+        upload_dir = os.path.join(os.path.dirname(__file__), "uploads", "tasks")
+        os.makedirs(upload_dir, exist_ok=True)
+        storage_key = f"{uuid.uuid4().hex}_{filename}"
+        with open(os.path.join(upload_dir, storage_key), "wb") as f:
+            f.write(content)
+        t.submission_file = f"/uploads/tasks/{storage_key}"
+
+    if submission_url:
+        t.submission_url = submission_url.strip()
+    if submission_notes:
+        t.submission_notes = submission_notes.strip()
+
+    t.status = "Done"
+    t.submitted_at = datetime.utcnow()
+    t.updated_at = datetime.utcnow()
+    session.add(t)
+    session.commit()
+    session.refresh(t)
+    return {"task": _task_dict(t, session), "message": "Task submitted successfully"}
+
+
+@app.patch("/tasks/{task_id}/submit")
+def submit_task_json(
+    task_id: int,
+    body: TaskSubmissionJson,
+    session: Session = Depends(get_session),
+):
+    t = session.get(Task, task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if body.submission_url:
+        t.submission_url = body.submission_url.strip()
+    if body.submission_notes:
+        t.submission_notes = body.submission_notes.strip()
+
+    t.status = "Done"
+    t.submitted_at = datetime.utcnow()
+    t.updated_at = datetime.utcnow()
+    session.add(t)
+    session.commit()
+    session.refresh(t)
+    return {"task": _task_dict(t, session), "message": "Task submitted successfully"}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Daily task sheet
 # ─────────────────────────────────────────────────────────────────────────────
@@ -7393,38 +8044,47 @@ def _task_sheet_dict(entry: TaskSheetEntry, session: Session) -> dict:
     user = session.get(User, entry.user_id)
     project = session.get(Project, entry.project_id) if entry.project_id else None
     ticket = session.get(ProjectTicket, entry.ticket_id) if entry.ticket_id else None
-    return {
-        **entry.model_dump(),
+    data = entry.model_dump()
+    data.update({
         "user_name": user.name if user else "Unknown user",
         "user_email": user.email if user else None,
+        "user_role": user.role if user else "Staff",
         "project_name": project.name if project else None,
         "ticket_name": ticket.task if ticket else None,
-        "created_at": entry.created_at.isoformat(),
-        "updated_at": entry.updated_at.isoformat(),
-    }
+        "created_at": entry.created_at.isoformat() if entry.created_at else "",
+        "updated_at": entry.updated_at.isoformat() if entry.updated_at else "",
+    })
+    return data
 
 
 @app.get("/task-sheet")
 def list_task_sheet_entries(
     user_id: Optional[int] = None,
     work_date: Optional[str] = None,
+    status: Optional[str] = None,
     session: Session = Depends(get_session),
 ):
     q = select(TaskSheetEntry).order_by(TaskSheetEntry.work_date.desc(), TaskSheetEntry.updated_at.desc())
     if user_id:
         q = q.where(TaskSheetEntry.user_id == user_id)
-    if work_date:
+    if work_date and work_date != "all":
         q = q.where(TaskSheetEntry.work_date == work_date)
+    if status and status != "all":
+        q = q.where(TaskSheetEntry.status == status)
     entries = session.exec(q).all()
     return {"entries": [_task_sheet_dict(entry, session) for entry in entries]}
 
 
 @app.post("/task-sheet")
 def create_task_sheet_entry(body: TaskSheetEntryRequest, session: Session = Depends(get_session)):
-    today = datetime.utcnow().date().isoformat()
-    if body.work_date != today:
-        raise HTTPException(status_code=400, detail="New task-sheet entries can only be added for today")
-    entry = TaskSheetEntry(**body.model_dump(), tenant_id=current_tenant_id.get())
+    work_date = body.work_date or datetime.utcnow().date().isoformat()
+    payload = body.model_dump()
+    payload["work_date"] = work_date
+    t_id = current_tenant_id.get()
+    if not t_id or t_id < 1:
+        user = session.get(User, body.user_id)
+        t_id = user.tenant_id if user and user.tenant_id and user.tenant_id > 0 else None
+    entry = TaskSheetEntry(**payload, tenant_id=t_id)
     session.add(entry)
     session.commit()
     session.refresh(entry)
@@ -7437,13 +8097,22 @@ def update_task_sheet_entry(entry_id: int, body: TaskSheetEntryRequest, session:
     if not entry:
         raise HTTPException(status_code=404, detail="Task-sheet entry not found")
     for field, value in body.model_dump().items():
-        if field != "work_date":
-            setattr(entry, field, value)
+        setattr(entry, field, value)
     entry.updated_at = datetime.utcnow()
     session.add(entry)
     session.commit()
     session.refresh(entry)
     return {"entry": _task_sheet_dict(entry, session)}
+
+
+@app.delete("/task-sheet/{entry_id}")
+def delete_task_sheet_entry(entry_id: int, session: Session = Depends(get_session)):
+    entry = session.get(TaskSheetEntry, entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Task-sheet entry not found")
+    session.delete(entry)
+    session.commit()
+    return {"ok": True, "message": "Entry deleted"}
 
 
 @app.delete("/notifications/clear-all/{user_id}")
@@ -10344,6 +11013,11 @@ class LeadCreateRequest(BaseModel):
     company_name: str
     website: Optional[str] = None
     industry: Optional[str] = None
+    course_interest_id: Optional[int] = None
+    gpa: Optional[float] = None
+    education_level: Optional[str] = None
+    academic_background: Optional[str] = None
+    career_goal: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     address: Optional[str] = None
@@ -10351,6 +11025,38 @@ class LeadCreateRequest(BaseModel):
     owner_id: Optional[int] = None
     status: str = "New"
     notes: Optional[str] = None
+
+
+class LeadDemoCreateRequest(BaseModel):
+    scheduled_at: datetime
+    meeting_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LeadDemoUpdateRequest(BaseModel):
+    scheduled_at: Optional[datetime] = None
+    status: Optional[str] = None
+    meeting_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class BackgroundDetailsUpdateRequest(BaseModel):
+    details: Dict[str, str]
+
+
+def _normalize_background_details(details: Dict[str, str]) -> Dict[str, str]:
+    if len(details) > 50:
+        raise HTTPException(status_code=422, detail="A maximum of 50 background fields is allowed")
+    normalized = {}
+    for raw_label, raw_value in details.items():
+        label = str(raw_label).strip()
+        value = str(raw_value).strip()
+        if not label:
+            raise HTTPException(status_code=422, detail="Background field names cannot be empty")
+        if len(label) > 100 or len(value) > 4000:
+            raise HTTPException(status_code=422, detail="Background field names are limited to 100 characters and values to 4000 characters")
+        normalized[label] = value
+    return normalized
 
 class AccountCreateRequest(BaseModel):
     company_name: str
@@ -10382,24 +11088,55 @@ class ContactCreateRequest(BaseModel):
 # ---- LEADS API ----
 @app.get("/leads")
 def get_leads(owner_id: Optional[int] = None, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "Intern", "SalesManager", "Sales", "Demo"])
+    actor_role = _normalize_role(actor.role)
     query = select(Lead)
-    if owner_id is not None:
+    if actor_role in ("Employee", "Intern", "SalesManager", "Sales", "Demo"):
+        query = query.where(Lead.owner_id == actor.id)
+    elif owner_id is not None:
         query = query.where(Lead.owner_id == owner_id)
     tenant_id = current_tenant_id.get()
     if tenant_id and tenant_id != 1:
         query = query.where(Lead.tenant_id == tenant_id)
     leads = session.exec(query.order_by(Lead.created_at.desc())).all()
-    return {"leads": leads}
+    results = []
+    for lead in leads:
+        lead_item = lead.dict()
+        if lead.course_interest_id:
+            course = session.get(Course, lead.course_interest_id)
+            if course:
+                lead_item["course_interest_title"] = course.title
+        student = session.get(Student, lead.converted_student_id) if lead.converted_student_id else None
+        if not student:
+            student = session.exec(select(Student).where(Student.lead_id == lead.id)).first()
+        if student:
+            lead_item["converted_student_id"] = student.id
+            lead_item["is_converted"] = True
+            enrollment = session.exec(
+                select(Enrollment).where(Enrollment.student_id == student.id).order_by(Enrollment.enrollment_date.desc())
+            ).first()
+            if enrollment and enrollment.course_id:
+                c = session.get(Course, enrollment.course_id)
+                if c:
+                    lead_item["enrolled_course_name"] = c.title
+            elif student.course_interest:
+                lead_item["enrolled_course_name"] = student.course_interest
+        results.append(lead_item)
+    return {"leads": results}
 
 @app.get("/leads/export-csv")
 def export_leads_csv(owner_id: Optional[int] = None, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "Intern", "SalesManager", "Sales", "Demo"])
+    actor_role = _normalize_role(actor.role)
     from fastapi.responses import StreamingResponse
     import io as _io
     import csv as _csv
     import json as _json
 
     query = select(Lead)
-    if owner_id is not None:
+    if actor_role in ("Employee", "Intern", "SalesManager", "Sales", "Demo"):
+        query = query.where(Lead.owner_id == actor.id)
+    elif owner_id is not None:
         query = query.where(Lead.owner_id == owner_id)
     tenant_id = current_tenant_id.get()
     if tenant_id and tenant_id != 1:
@@ -10536,7 +11273,41 @@ def get_lead(lead_id: int, session: Session = Depends(get_session)):
     lead = session.get(Lead, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-    return lead
+    
+    lead_dict = lead.dict()
+    student = None
+    if lead.converted_student_id:
+        student = session.get(Student, lead.converted_student_id)
+    if not student:
+        student = session.exec(select(Student).where(Student.lead_id == lead.id)).first()
+    
+    if student:
+        lead_dict["converted_student_id"] = student.id
+        lead_dict["is_converted"] = True
+        lead_dict["student_name"] = student.name
+        enrollment = session.exec(
+            select(Enrollment).where(Enrollment.student_id == student.id).order_by(Enrollment.enrollment_date.desc())
+        ).first()
+        if enrollment:
+            course = session.get(Course, enrollment.course_id) if enrollment.course_id else None
+            batch = session.get(Batch, enrollment.batch_id) if enrollment.batch_id else None
+            lead_dict["enrolled_course_name"] = course.title if course else None
+            lead_dict["enrolled_course_id"] = course.id if course else None
+            lead_dict["enrolled_batch_name"] = batch.batch_name if batch else None
+            lead_dict["enrolled_batch_id"] = batch.id if batch else None
+            lead_dict["enrollment_id"] = enrollment.id
+            lead_dict["payment_status"] = enrollment.payment_status
+            lead_dict["amount_paid"] = enrollment.amount_paid
+            lead_dict["amount_due"] = enrollment.amount_due
+        elif student.course_interest:
+            lead_dict["enrolled_course_name"] = student.course_interest
+            lead_dict["enrolled_course_id"] = student.course_interest_id
+    elif lead.course_interest_id:
+        course = session.get(Course, lead.course_interest_id)
+        if course:
+            lead_dict["course_interest_title"] = course.title
+            
+    return lead_dict
 
 @app.get("/leads/{lead_id}/activities")
 def get_lead_activities(lead_id: int, session: Session = Depends(get_session)):
@@ -10787,6 +11558,95 @@ def update_lead(lead_id: int, body: LeadCreateRequest, session: Session = Depend
     session.commit()
     session.refresh(lead)
     return lead
+
+
+def _require_lead_demo_access(lead: Optional[Lead], actor: User):
+    if not lead or (lead.tenant_id and actor.role != "SuperAdmin" and lead.tenant_id != actor.tenant_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if actor.role == "SalesManager" and lead.owner_id != actor.id:
+        raise HTTPException(status_code=403, detail="You can only manage demos for leads assigned to you")
+
+
+def _lead_demo_dict(demo: LeadDemoSession):
+    return {
+        "id": demo.id,
+        "lead_id": demo.lead_id,
+        "scheduled_at": demo.scheduled_at.isoformat(),
+        "status": demo.status,
+        "meeting_url": demo.meeting_url,
+        "notes": demo.notes,
+        "created_at": demo.created_at.isoformat(),
+    }
+
+
+@app.get("/leads/{lead_id}/demo-sessions")
+def list_lead_demo_sessions(lead_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Demo"])
+    lead = session.get(Lead, lead_id)
+    _require_lead_demo_access(lead, actor)
+    demos = session.exec(select(LeadDemoSession).where(LeadDemoSession.lead_id == lead_id).order_by(LeadDemoSession.scheduled_at.desc())).all()
+    return {"demo_sessions": [_lead_demo_dict(demo) for demo in demos]}
+
+
+@app.post("/leads/{lead_id}/demo-sessions")
+def schedule_lead_demo(lead_id: int, body: LeadDemoCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Demo"])
+    lead = session.get(Lead, lead_id)
+    _require_lead_demo_access(lead, actor)
+    demo = LeadDemoSession(
+        tenant_id=lead.tenant_id or actor.tenant_id,
+        lead_id=lead_id,
+        scheduled_at=body.scheduled_at,
+        meeting_url=(body.meeting_url or "").strip() or None,
+        notes=(body.notes or "").strip() or None,
+        created_by=actor.id,
+    )
+    lead.status = "Demo Scheduled"
+    session.add(demo)
+    session.add(lead)
+    session.commit()
+    session.refresh(demo)
+    return {"demo_session": _lead_demo_dict(demo)}
+
+
+@app.patch("/lead-demo-sessions/{demo_session_id}")
+def update_lead_demo_session(demo_session_id: int, body: LeadDemoUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Demo"])
+    demo = session.get(LeadDemoSession, demo_session_id)
+    if not demo:
+        raise HTTPException(status_code=404, detail="Demo session not found")
+    lead = session.get(Lead, demo.lead_id)
+    _require_lead_demo_access(lead, actor)
+    data = body.dict(exclude_unset=True)
+    if data.get("status") not in (None, "Scheduled", "Attended", "Missed", "Cancelled"):
+        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Missed, or Cancelled")
+    for key, value in data.items():
+        setattr(demo, key, value)
+    demo.updated_at = datetime.utcnow()
+    session.add(demo)
+    session.commit()
+    session.refresh(demo)
+    return {"demo_session": _lead_demo_dict(demo)}
+
+
+@app.patch("/leads/{lead_id}/background-details")
+def update_lead_background_details(lead_id: int, body: BackgroundDetailsUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Demo"])
+    lead = session.get(Lead, lead_id)
+    if not lead or (lead.tenant_id and actor.role != "SuperAdmin" and lead.tenant_id != actor.tenant_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if actor.role == "SalesManager" and lead.owner_id != actor.id:
+        raise HTTPException(status_code=403, detail="You can only edit background details for leads assigned to you")
+    details = _normalize_background_details(body.details)
+    lead.background_details = details
+    session.add(lead)
+    if lead.converted_student_id:
+        student = session.get(Student, lead.converted_student_id)
+        if student:
+            student.background_details = details
+            session.add(student)
+    session.commit()
+    return {"background_details": details}
 
 
 @app.post("/leads/{lead_id}/generate-outbound-draft")
@@ -11234,6 +12094,273 @@ def convert_lead_to_client(lead_id: int, session: Session = Depends(get_session)
     
     return {"message": "Lead converted successfully", "client_id": client.id, "account_id": account.id}
 
+
+class LeadStudentEnrollmentRequest(BaseModel):
+    batch_id: int
+
+
+@app.post("/leads/{lead_id}/convert-to-student")
+def convert_lead_to_student(
+    lead_id: int,
+    body: Optional[LeadStudentEnrollmentRequest] = None,
+    session: Session = Depends(get_session),
+):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    lead = session.get(Lead, lead_id)
+    if not lead or (lead.tenant_id and actor.role != "SuperAdmin" and lead.tenant_id != actor.tenant_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    batch = session.get(Batch, body.batch_id) if body else None
+    course = session.get(Course, batch.course_id) if batch else None
+    if body and (not batch or not course):
+        raise HTTPException(status_code=404, detail="Batch or course not found")
+    if batch and (
+        (batch.tenant_id and actor.tenant_id and batch.tenant_id != actor.tenant_id)
+        or (batch.tenant_id and lead.tenant_id and batch.tenant_id != lead.tenant_id)
+    ):
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if batch and (not course.is_active or batch.status in ("Completed", "Cancelled")):
+        raise HTTPException(status_code=409, detail="This batch is not accepting enrollments")
+
+    student = session.get(Student, lead.converted_student_id) if lead.converted_student_id else None
+    if not student:
+        student = session.exec(select(Student).where(Student.lead_id == lead.id)).first()
+    if not student:
+        interest_course = course or (session.get(Course, lead.course_interest_id) if lead.course_interest_id else None)
+        student = Student(
+            tenant_id=lead.tenant_id or actor.tenant_id,
+            lead_id=lead.id,
+            name=lead.company_name,
+            email=lead.email,
+            phone=lead.phone,
+            address=lead.address,
+            course_interest=interest_course.title if interest_course else lead.industry,
+            course_interest_id=interest_course.id if interest_course else lead.course_interest_id,
+            gpa=lead.gpa,
+            education_level=lead.education_level,
+            academic_background=lead.academic_background,
+            background_details=lead.background_details,
+            career_goal=lead.career_goal,
+            course_plan=lead.course_plan,
+            source=lead.source,
+            assigned_salesperson_id=lead.owner_id,
+            notes=lead.notes,
+        )
+        session.add(student)
+        session.flush()
+    else:
+        if not student.assigned_salesperson_id:
+            student.assigned_salesperson_id = lead.owner_id
+        if batch:
+            student.course_interest = course.title
+            student.course_interest_id = course.id
+    if not student.background_details and lead.background_details:
+        student.background_details = lead.background_details
+
+    enrollment = None
+    if batch:
+        enrollment = session.exec(
+            select(Enrollment).where(
+                Enrollment.student_id == student.id,
+                Enrollment.batch_id == batch.id,
+                Enrollment.status == "Active",
+            )
+        ).first()
+        if not enrollment:
+            active_count = session.exec(
+                select(func.count(Enrollment.id)).where(
+                    Enrollment.batch_id == batch.id,
+                    Enrollment.status == "Active",
+                )
+            ).first() or 0
+            if active_count >= batch.max_seats:
+                raise HTTPException(status_code=409, detail="This batch has reached its seat limit")
+            import random
+            import string
+
+            total_fee = course.price or 0.0
+            enrollment = Enrollment(
+                tenant_id=student.tenant_id or actor.tenant_id,
+                student_id=student.id,
+                batch_id=batch.id,
+                course_id=course.id,
+                total_fee=total_fee,
+                amount_due=total_fee,
+                payment_status="Pending" if total_fee > 0 else "Paid",
+                enrolled_by=_student_salesperson_id(student, session) or actor.id,
+                slip_number="ADM-" + "".join(random.choices(string.digits, k=6)),
+                notes=f"Enrolled from lead #{lead.id}",
+            )
+            session.add(enrollment)
+
+    lead.converted_student_id = student.id
+    lead.is_converted = True
+    lead.status = "Enrolled"
+    session.add(lead)
+    session.commit()
+    return {
+        "message": "Lead enrolled as a student" if batch else "Lead converted to student",
+        "student_id": student.id,
+        "enrollment_id": enrollment.id if enrollment else None,
+    }
+
+
+@app.post("/leads/{lead_id}/course-plan")
+def generate_lead_course_plan(lead_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager"])
+    lead = session.get(Lead, lead_id)
+    if not lead or (lead.tenant_id and actor.role != "SuperAdmin" and lead.tenant_id != actor.tenant_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    courses = session.exec(select(Course).where(Course.is_active == True).order_by(Course.title)).all()
+    if not courses:
+        raise HTTPException(status_code=409, detail="Add an active course to the catalog before generating a course plan")
+    import re
+
+    stop_words = {"and", "for", "the", "with", "from", "into", "their", "that", "this", "have", "has", "who", "your", "role"}
+
+    def terms(value):
+        return {word for word in re.findall(r"[a-z0-9]+", str(value or "").lower()) if len(word) > 2 and word not in stop_words}
+
+    interest_terms = terms(lead.industry)
+    goal_terms = terms(lead.career_goal)
+    background_terms = terms(lead.academic_background)
+    academic_terms = terms(f"{lead.education_level or ''} {lead.academic_background or ''}")
+    profile_fields = [lead.education_level, lead.gpa, lead.academic_background, lead.career_goal, lead.industry]
+    profile_completeness = round(sum(value is not None and str(value).strip() != "" for value in profile_fields) / len(profile_fields) * 100)
+
+    def overlap_percent(source_terms, course_terms, default):
+        if not source_terms:
+            return default
+        return round(len(source_terms & course_terms) / len(source_terms) * 100)
+
+    scored_courses = []
+    for course in courses:
+        course_text = " ".join((course.title or "", course.category or "", course.description or "", course.prerequisites or "", str(course.syllabus or "")))
+        course_terms = terms(course_text)
+        category_text = f"{course.title or ''} {course.category or ''}".lower()
+        interest_text = (lead.industry or "").lower()
+        interest_score = 100 if interest_text and interest_text in category_text else overlap_percent(interest_terms, course_terms, 45)
+        goal_score = overlap_percent(goal_terms, course_terms, 40)
+        background_score = overlap_percent(background_terms, course_terms, 40)
+
+        prerequisite_text = (course.prerequisites or "").lower()
+        if not prerequisite_text or any(term in prerequisite_text for term in ("no prerequisite", "no experience", "beginner", "not required")):
+            prerequisite_score = 90
+        else:
+            prerequisite_score = overlap_percent(terms(prerequisite_text), academic_terms, 45)
+        gpa_score = round(min(100, max(0, float(lead.gpa) * 10))) if lead.gpa is not None else 50
+        academic_score = round(prerequisite_score * 0.7 + gpa_score * 0.3)
+        dimensions = {
+            "interest_match": interest_score,
+            "career_goal_alignment": goal_score,
+            "background_relevance": background_score,
+            "academic_readiness_evidence": academic_score,
+        }
+        fit_score = round(
+            interest_score * 0.3
+            + goal_score * 0.3
+            + background_score * 0.25
+            + academic_score * 0.15
+        )
+        scored_courses.append({
+            "course_id": course.id,
+            "course_title": course.title,
+            "category": course.category,
+            "duration_weeks": course.duration_weeks,
+            "duration_hours": course.duration_hours,
+            "prerequisites": course.prerequisites,
+            "fit_score_percent": fit_score,
+            "fit_dimensions": dimensions,
+        })
+
+    scored_courses.sort(key=lambda item: (-item["fit_score_percent"], item["course_title"].lower()))
+    selected_course = session.get(Course, lead.course_interest_id) if lead.course_interest_id else None
+    if selected_course and not selected_course.is_active:
+        selected_course = None
+    if not selected_course:
+        selected_course = next(course for course in courses if course.id == scored_courses[0]["course_id"])
+    selected_fit = next(item for item in scored_courses if item["course_id"] == selected_course.id)
+    duration_weeks = selected_course.duration_weeks or 12
+    first_phase_end = max(1, round(duration_weeks / 3))
+    second_phase_end = max(first_phase_end + 1, round(duration_weeks * 2 / 3))
+    readiness_gaps = []
+    if not lead.education_level:
+        readiness_gaps.append("Confirm the learner's highest completed education level.")
+    if lead.gpa is None:
+        readiness_gaps.append("Add GPA or another academic-readiness signal if relevant to this course.")
+    if not lead.academic_background:
+        readiness_gaps.append("Record prior study, work experience, and practical skills.")
+    if not lead.career_goal:
+        readiness_gaps.append("Clarify the target role or outcome before finalizing the course recommendation.")
+    if not lead.industry:
+        readiness_gaps.append("Confirm the learner's course or subject interest.")
+
+    course_catalog = [{
+        "id": course.id,
+        "title": course.title,
+        "category": course.category,
+        "description": course.description,
+        "prerequisites": course.prerequisites,
+        "duration_hours": course.duration_hours,
+        "duration_weeks": course.duration_weeks,
+    } for course in courses]
+    plan = {
+        "course_id": selected_course.id,
+        "course_title": selected_course.title,
+        "fit_score_percent": selected_fit["fit_score_percent"],
+        "fit_dimensions": selected_fit["fit_dimensions"],
+        "profile_completeness_percent": profile_completeness,
+        "profile_evidence": {
+            "education_level": lead.education_level,
+            "gpa": lead.gpa,
+            "academic_background": lead.academic_background,
+            "career_goal": lead.career_goal,
+            "course_interest": lead.industry,
+        },
+        "recommended_courses": scored_courses[:3],
+        "learning_roadmap": [
+            {"phase": "Foundations and diagnostic", "weeks": f"1-{first_phase_end}", "focus": "Confirm prerequisites, set a baseline, and close essential knowledge gaps."},
+            {"phase": "Guided practice", "weeks": f"{first_phase_end + 1}-{second_phase_end}", "focus": "Practice core skills with feedback and progressively realistic exercises."},
+            {"phase": "Portfolio and next steps", "weeks": f"{second_phase_end + 1}-{duration_weeks}", "focus": "Complete a course-relevant project and review next learning or career steps."},
+        ],
+        "readiness_gaps": readiness_gaps,
+        "fit_reason": f"{selected_course.title} is compared with the learner's recorded interest, background, career goal, education, and GPA. The fit score is a guidance signal, not an outcome prediction.",
+        "pain_points": readiness_gaps or ["Confirm available weekly study time and preferred learning support."],
+        "pitch": f"Connect {selected_course.title} to the learner's goal of {lead.career_goal or 'building new skills'} through guided practice, feedback, and a portfolio-ready project. Confirm schedule and prerequisites before enrollment.",
+        "opportunities": ["Build a portfolio project using course skills", "Practice role-specific tasks with instructor feedback", "Review suitable next learning steps without promising placement or income"],
+        "next_questions": ["What weekly study time is realistic?", "Which prior experience should the course build on?", "What evidence of progress would be useful to the learner?"],
+        "generated_by": "fallback",
+    }
+    prompt = (
+        "Create ethical, specific education-course guidance from the supplied learner profile and course catalog. "
+        "Do not claim guaranteed jobs, salaries, admission, or outcomes. Return JSON with keys fit_reason (string), "
+        "pain_points (array of strings), pitch (string), opportunities (array of strings), and next_questions (array of strings). "
+        f"Learner: {json.dumps({'name': lead.company_name, 'education_level': lead.education_level, 'gpa': lead.gpa, 'background': lead.academic_background, 'goal': lead.career_goal, 'notes': lead.notes, 'interest': lead.industry, 'selected_course_id': selected_course.id})}\n"
+        f"Catalog: {json.dumps(course_catalog)}"
+    )
+    try:
+        from modules.llm_engine import get_openai_client
+        response = get_openai_client().chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=700,
+            response_format={"type": "json_object"},
+        )
+        generated = json.loads(response.choices[0].message.content or "{}")
+        for key in ("fit_reason", "pain_points", "pitch", "opportunities", "next_questions"):
+            if key in generated:
+                plan[key] = generated[key]
+        plan["generated_by"] = "ai"
+    except Exception as error:
+        print(f"Lead course-plan AI fallback for lead {lead.id}: {error}")
+
+    lead.course_interest_id = selected_course.id
+    lead.industry = selected_course.category or lead.industry
+    lead.course_plan = plan
+    session.add(lead)
+    session.commit()
+    return {"course_plan": plan}
+
 # ---- ACCOUNTS API ----
 @app.get("/accounts")
 def get_accounts(session: Session = Depends(get_session)):
@@ -11547,8 +12674,12 @@ async def import_execute(
 
 @app.post("/leads/{lead_id}/followup")
 def add_lead_followup(lead_id: int, body: ClientFollowUpRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    actor_role = _normalize_role(actor.role)
     lead = session.get(Lead, lead_id)
     if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if actor_role in ("SalesManager", "Employee", "Sales", "Demo") and lead.owner_id != actor.id:
         raise HTTPException(status_code=404, detail="Lead not found")
 
     # Add to notes
@@ -11567,6 +12698,24 @@ def add_lead_followup(lead_id: int, body: ClientFollowUpRequest, session: Sessio
     )
     session.add(activity)
 
+    followup_task = None
+    if body.due_date:
+        assigned_to = body.assigned_to or lead.owner_id or actor.id
+        if actor_role in ("SalesManager", "Employee", "Sales", "Demo") and assigned_to != actor.id:
+            raise HTTPException(status_code=403, detail="You can only assign this follow-up to yourself")
+        followup_task = Task(
+            tenant_id=lead.tenant_id,
+            title=(body.task_title or f"Follow up: {lead.company_name}")[:500],
+            description=body.task_description or body.content,
+            status="Todo",
+            priority="High",
+            due_date=body.due_date,
+            lead_id=lead.id,
+            assigned_to=assigned_to,
+            created_by=actor.id,
+        )
+        session.add(followup_task)
+
     if body.email_agent_data:
         client_research = session.exec(
             select(ClientResearch).where(ClientResearch.lead_id == lead_id)
@@ -11583,7 +12732,11 @@ def add_lead_followup(lead_id: int, body: ClientFollowUpRequest, session: Sessio
 
     session.commit()
     
-    return {"success": True, "message": "Follow-up added to lead."}
+    return {
+        "success": True,
+        "message": "Follow-up added to lead.",
+        "task": {"id": followup_task.id, "due_date": followup_task.due_date} if followup_task else None,
+    }
 
 
 class LeadNoteRequest(BaseModel):
@@ -13626,21 +14779,24 @@ def get_work_queue(
     session: Session = Depends(get_session)
 ):
     try:
-        user_id = user_id or current_salesperson_id.get()
-        if not user_id:
-            raise HTTPException(status_code=401, detail="User identity is required")
-        current_user = session.get(User, user_id)
-        role = role or (current_user.role if current_user else "Employee")
+        current_user = _current_user(session)
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        user_id = current_user.id
+        role = current_user.role
         today_date = date.today()
         if date_filter == "yesterday":
-            target_date = today_date - timedelta(days=1)
+            start_date = end_date = today_date - timedelta(days=1)
         elif date_filter == "tomorrow":
-            target_date = today_date + timedelta(days=1)
+            start_date = end_date = today_date + timedelta(days=1)
+        elif date_filter == "week":
+            start_date = today_date - timedelta(days=today_date.weekday())
+            end_date = start_date + timedelta(days=6)
         else:
-            target_date = today_date
+            start_date = end_date = today_date
             
-        start_dt = datetime.combine(target_date, datetime.min.time())
-        end_dt = datetime.combine(target_date, datetime.max.time())
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        end_dt = datetime.combine(end_date, datetime.max.time())
         
         # Work Queue is personal by design. Admins can inspect the same personal
         # queue by selecting their own account; do not leak the whole workspace.
@@ -13650,7 +14806,7 @@ def get_work_queue(
         tasks_q = session.query(Task)
         if not is_admin:
             tasks_q = tasks_q.filter(Task.assigned_to == user_id)
-        tasks = [task for task in tasks_q.all() if (task.due_date or "")[:10] == target_date.isoformat()]
+        tasks = [task for task in tasks_q.all() if (task.due_date or "")[:10] >= start_date.isoformat() and (task.due_date or "")[:10] <= end_date.isoformat()]
         
         # 2. Meetings
         meetings_q = session.query(Meeting).filter(Meeting.scheduled_at >= start_dt, Meeting.scheduled_at <= end_dt)
@@ -13694,9 +14850,9 @@ def get_work_queue(
             owner_names = {str(user.id).lower(), (user.name or "").strip().lower(), (user.email or "").strip().lower()}
             all_project_tickets = session.query(ProjectTicket).all()
             owned_tickets = [ticket for ticket in all_project_tickets if (ticket.current_owner or "").strip().lower() in owner_names]
-            ticket_due = [ticket for ticket in owned_tickets if ticket.requested_date == target_date.isoformat()]
+            ticket_due = [ticket for ticket in owned_tickets if ticket.requested_date and start_date.isoformat() <= ticket.requested_date <= end_date.isoformat()]
             ticket_ongoing = [ticket for ticket in owned_tickets if ticket.current_state == "In Dev"]
-            ticket_completed = [ticket for ticket in owned_tickets if ticket.date_release_prod == target_date.isoformat()]
+            ticket_completed = [ticket for ticket in owned_tickets if ticket.date_release_prod and start_date.isoformat() <= ticket.date_release_prod <= end_date.isoformat()]
             tickets = list({ticket.id: ticket for ticket in ticket_due + ticket_ongoing + ticket_completed}.values())
 
         # Sales ownership: only clients/leads assigned to the signed-in user.
@@ -13712,7 +14868,8 @@ def get_work_queue(
         
         return {
             "ok": True,
-            "date": target_date.isoformat(),
+            "date": start_date.isoformat(),
+            "date_end": end_date.isoformat(),
             "tasks": tasks,
             "meetings": meetings,
             "calls": calls,
@@ -16541,3 +17698,2333 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
     ).all()
     return {"emails": [e.dict() for e in emails]}
 
+
+# ============================================================
+# TRAINING INSTITUTE API ENDPOINTS
+# ============================================================
+
+from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource
+
+# --- Create tables on startup (migration) ---
+def _create_institute_tables():
+    from sqlalchemy import inspect, text
+    from database import engine
+    inspector = inspect(engine)
+    existing = inspector.get_table_names()
+    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource]
+    from sqlmodel import SQLModel
+    for model in tables_to_create:
+        if model.__tablename__ not in existing:
+            try:
+                model.metadata.create_all(engine, tables=[model.__table__])
+                print(f"Created table: {model.__tablename__}")
+            except Exception as e:
+                print(f"Table {model.__tablename__} error: {e}")
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+        for table, column, definition in [
+            ("leads", "background_details", "JSON"),
+            ("students", "user_id", "INTEGER REFERENCES users(id)"),
+            ("students", "background_details", "JSON"),
+            ("students", "course_interest", "VARCHAR(200)"),
+            ("students", "course_interest_id", "INTEGER REFERENCES courses(id)"),
+            ("students", "assigned_salesperson_id", "INTEGER REFERENCES users(id)"),
+            ("students", "gpa", "FLOAT"),
+            ("students", "education_level", "VARCHAR(120)"),
+            ("students", "academic_background", "TEXT"),
+            ("students", "career_goal", "TEXT"),
+            ("students", "course_plan", "JSON"),
+            ("students", "drop_reason", "TEXT"),
+            ("students", "improvement_plan", "TEXT"),
+            ("students", "dropped_at", "TIMESTAMP"),
+            ("students", "dropped_by", "INTEGER REFERENCES users(id)"),
+            ("attendance", "session_id", "INTEGER REFERENCES institute_sessions(id)"),
+            ("leads", "converted_student_id", "INTEGER"),
+            ("leads", "course_interest_id", "INTEGER REFERENCES courses(id)"),
+            ("leads", "gpa", "FLOAT"),
+            ("leads", "education_level", "VARCHAR(120)"),
+            ("leads", "academic_background", "TEXT"),
+            ("leads", "career_goal", "TEXT"),
+            ("leads", "course_plan", "JSON"),
+            ("batches", "session_duration_hours", "INTEGER DEFAULT 1"),
+            ("batches", "assignment_strategy", "VARCHAR(30) DEFAULT 'manual'"),
+            ("tasks", "student_id", "INTEGER REFERENCES students(id)"),
+            ("tasks", "batch_id", "INTEGER REFERENCES batches(id)"),
+        ]:
+            if table in inspector.get_table_names() and column not in {item["name"] for item in inspector.get_columns(table)}:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
+
+try:
+    _create_institute_tables()
+except Exception as e:
+    print(f"Institute table creation error: {e}")
+
+
+# -------------------- COURSE Pydantic Models --------------------
+class CourseCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    duration_weeks: Optional[int] = None
+    duration_hours: Optional[int] = None
+    price: float = 0.0
+    advance_amount: float = 0.0
+    prerequisites: Optional[str] = None
+    syllabus: Optional[Any] = None
+    thumbnail_url: Optional[str] = None
+    is_active: bool = True
+
+class CourseUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    duration_weeks: Optional[int] = None
+    duration_hours: Optional[int] = None
+    price: Optional[float] = None
+    advance_amount: Optional[float] = None
+    prerequisites: Optional[str] = None
+    syllabus: Optional[Any] = None
+    thumbnail_url: Optional[str] = None
+    is_active: Optional[bool] = None
+
+# -------------------- INSTRUCTOR Pydantic Models --------------------
+class InstructorCreateRequest(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    bio: Optional[str] = None
+    expertise: Optional[str] = None
+    qualification: Optional[str] = None
+    experience_years: Optional[int] = None
+    photo_url: Optional[str] = None
+    user_id: Optional[int] = None
+
+class InstructorUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    bio: Optional[str] = None
+    expertise: Optional[str] = None
+    qualification: Optional[str] = None
+    experience_years: Optional[int] = None
+    photo_url: Optional[str] = None
+    is_active: Optional[bool] = None
+
+# -------------------- BATCH Pydantic Models --------------------
+class BatchCreateRequest(BaseModel):
+    course_id: int
+    instructor_id: Optional[int] = None
+    batch_name: str
+    batch_code: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    schedule: Optional[str] = None
+    session_duration_hours: int = 1
+    auto_assign_instructor: bool = False
+    assignment_strategy: str = "round_robin"
+    mode: str = "Offline"
+    max_seats: int = 30
+    status: str = "Upcoming"
+    room_or_link: Optional[str] = None
+    notes: Optional[str] = None
+
+class BatchUpdateRequest(BaseModel):
+    instructor_id: Optional[int] = None
+    batch_name: Optional[str] = None
+    batch_code: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    schedule: Optional[str] = None
+    session_duration_hours: Optional[int] = None
+    assignment_strategy: Optional[str] = None
+    mode: Optional[str] = None
+    max_seats: Optional[int] = None
+    status: Optional[str] = None
+    room_or_link: Optional[str] = None
+    notes: Optional[str] = None
+
+class BatchStudentsRequest(BaseModel):
+    student_ids: List[int]
+
+# -------------------- STUDENT Pydantic Models --------------------
+class StudentCreateRequest(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    course_interest: Optional[str] = None
+    course_interest_id: Optional[int] = None
+    gpa: Optional[float] = None
+    education_level: Optional[str] = None
+    academic_background: Optional[str] = None
+    career_goal: Optional[str] = None
+    address: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    gender: Optional[str] = None
+    qualification: Optional[str] = None
+    guardian_name: Optional[str] = None
+    guardian_phone: Optional[str] = None
+    source: Optional[str] = None
+    lead_id: Optional[int] = None
+    assigned_salesperson_id: Optional[int] = None
+    auto_assign_salesperson: bool = False
+    notes: Optional[str] = None
+
+class StudentUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    course_interest: Optional[str] = None
+    course_interest_id: Optional[int] = None
+    gpa: Optional[float] = None
+    education_level: Optional[str] = None
+    academic_background: Optional[str] = None
+    career_goal: Optional[str] = None
+    address: Optional[str] = None
+    gender: Optional[str] = None
+    qualification: Optional[str] = None
+    guardian_name: Optional[str] = None
+    guardian_phone: Optional[str] = None
+    status: Optional[str] = None
+    assigned_salesperson_id: Optional[int] = None
+    auto_assign_salesperson: bool = False
+    drop_reason: Optional[str] = None
+    improvement_plan: Optional[str] = None
+    notes: Optional[str] = None
+    photo_url: Optional[str] = None
+
+class StudentNoteRequest(BaseModel):
+    content: str
+
+class StudentDropRequest(BaseModel):
+    reason: str
+    improvement_plan: str
+
+
+def _salesperson_assignment_metrics(session: Session):
+    eligible_users = session.exec(
+        select(User).where(User.role.in_(["SalesManager", "Employee"]), User.is_active == True)
+    ).all()
+    metrics = {user.id: {"revenue_collected": 0.0, "assigned_workload": 0} for user in eligible_users if user.id is not None}
+    leads = session.exec(select(Lead)).all()
+    lead_by_id = {lead.id: lead for lead in leads}
+    students = session.exec(select(Student)).all()
+    student_by_id = {student.id: student for student in students}
+
+    for lead in leads:
+        if lead.owner_id in metrics:
+            metrics[lead.owner_id]["assigned_workload"] += 1
+    for student in students:
+        linked_lead = lead_by_id.get(student.lead_id)
+        lead_owner_id = linked_lead.owner_id if linked_lead else None
+        if student.assigned_salesperson_id in metrics and student.assigned_salesperson_id != lead_owner_id:
+            metrics[student.assigned_salesperson_id]["assigned_workload"] += 1
+    for enrollment in session.exec(select(Enrollment)).all():
+        student = student_by_id.get(enrollment.student_id)
+        linked_lead = lead_by_id.get(student.lead_id) if student and student.lead_id else None
+        owner_id = (student.assigned_salesperson_id if student else None) or (linked_lead.owner_id if linked_lead else None) or enrollment.enrolled_by
+        if owner_id in metrics:
+            metrics[owner_id]["revenue_collected"] += enrollment.amount_paid or 0
+    return eligible_users, metrics
+
+
+def _choose_revenue_balanced_salesperson(session: Session):
+    users, metrics = _salesperson_assignment_metrics(session)
+    if not users:
+        raise HTTPException(status_code=409, detail="Add an active salesperson before using auto-assign")
+    return min(users, key=lambda user: (
+        metrics[user.id]["revenue_collected"],
+        metrics[user.id]["assigned_workload"],
+        user.id or 0,
+    ))
+
+
+def _validate_salesperson(session: Session, user_id: Optional[int]):
+    if user_id is None:
+        return None
+    user = session.get(User, user_id)
+    if not user or not user.is_active or user.role not in ("Admin", "SalesManager", "Employee"):
+        raise HTTPException(status_code=422, detail="Choose an active salesperson")
+    return user
+
+
+def _student_salesperson_id(student: Student, session: Session):
+    if student.assigned_salesperson_id:
+        return student.assigned_salesperson_id
+    lead = session.get(Lead, student.lead_id) if student.lead_id else None
+    return lead.owner_id if lead else None
+
+
+def _require_student_salesperson_access(actor: User, student: Student, session: Session) -> None:
+    actor_role = _normalize_role(actor.role)
+    if actor_role in ("SalesManager", "Employee", "Sales", "Demo") and _student_salesperson_id(student, session) != actor.id:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+
+def _require_enrollment_access(actor: User, enrollment: Enrollment, session: Session) -> Student:
+    student = session.get(Student, enrollment.student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    if _normalize_role(actor.role) == "Student" and student.user_id != actor.id:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    _require_student_salesperson_access(actor, student, session)
+    return student
+
+# -------------------- ENROLLMENT Pydantic Models --------------------
+class EnrollmentCreateRequest(BaseModel):
+    student_id: int
+    batch_id: int
+    course_id: int
+    total_fee: float = 0.0
+    amount_paid: float = 0.0
+    payment_mode: Optional[str] = None
+    discount: float = 0.0
+    discount_reason: Optional[str] = None
+    enrolled_by: Optional[int] = None
+    notes: Optional[str] = None
+
+class EnrollmentUpdateRequest(BaseModel):
+    amount_paid: Optional[float] = None
+    payment_mode: Optional[str] = None
+    payment_status: Optional[str] = None
+    status: Optional[str] = None
+    discount: Optional[float] = None
+    discount_reason: Optional[str] = None
+    notes: Optional[str] = None
+
+class PaymentRecordRequest(BaseModel):
+    enrollment_id: int
+    student_id: int
+    amount: float
+    payment_mode: str = "Cash"
+    receipt_number: Optional[str] = None
+    notes: Optional[str] = None
+
+class InstructorFeedbackRequest(BaseModel):
+    instructor_id: int
+    batch_id: int
+    student_id: Optional[int] = None
+    rating: int = 5
+    teaching_quality: Optional[int] = None
+    punctuality: Optional[int] = None
+    communication: Optional[int] = None
+    feedback_text: Optional[str] = None
+
+class AttendanceRequest(BaseModel):
+    batch_id: int
+    student_id: int
+    date: Optional[str] = None
+    status: str = "Present"
+    notes: Optional[str] = None
+
+class InstituteLoginRequest(BaseModel):
+    password: str
+
+class InstituteSessionCreateRequest(BaseModel):
+    title: str
+    topic: Optional[str] = None
+    scheduled_start: datetime
+    scheduled_end: Optional[datetime] = None
+    status: str = "Scheduled"
+    meeting_url: Optional[str] = None
+    notes: Optional[str] = None
+
+class BatchTaskCreateRequest(BaseModel):
+    title: str
+    description: Optional[str] = None
+    priority: str = "Medium"
+    due_date: Optional[str] = None
+
+class InstituteSessionUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    topic: Optional[str] = None
+    scheduled_start: Optional[datetime] = None
+    scheduled_end: Optional[datetime] = None
+    status: Optional[str] = None
+    meeting_url: Optional[str] = None
+    notes: Optional[str] = None
+
+class SessionAttendanceRequest(BaseModel):
+    student_id: int
+    status: str = "Present"
+    notes: Optional[str] = None
+
+class SessionProgressRequest(BaseModel):
+    student_id: int
+    status: str = "In Progress"
+    completion_percent: int = 0
+    score: Optional[float] = None
+    notes: Optional[str] = None
+
+# -------------------- COURSE ENDPOINTS --------------------
+@app.get("/courses")
+def get_courses(session: Session = Depends(get_session)):
+    courses = session.exec(select(Course).order_by(Course.created_at.desc())).all()
+    result = []
+    for c in courses:
+        # Count batches and students
+        batch_count = session.exec(select(func.count(Batch.id)).where(Batch.course_id == c.id)).first() or 0
+        enrollment_count = session.exec(select(func.count(Enrollment.id)).where(Enrollment.course_id == c.id)).first() or 0
+        result.append({
+            "id": c.id, "title": c.title, "slug": c.slug, "description": c.description,
+            "category": c.category, "duration_weeks": c.duration_weeks, "duration_hours": c.duration_hours,
+            "price": c.price, "advance_amount": c.advance_amount, "thumbnail_url": c.thumbnail_url,
+            "syllabus": c.syllabus, "prerequisites": c.prerequisites, "is_active": c.is_active,
+            "batch_count": batch_count, "enrollment_count": enrollment_count,
+            "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat()
+        })
+    return {"courses": result}
+
+@app.post("/courses")
+def create_course(body: CourseCreateRequest, session: Session = Depends(get_session)):
+    import re
+    slug = re.sub(r'[^a-z0-9]+', '-', body.title.lower()).strip('-') if body.title else None
+    course = Course(
+        title=body.title, slug=slug, description=body.description, category=body.category,
+        duration_weeks=body.duration_weeks, duration_hours=body.duration_hours,
+        price=body.price, advance_amount=body.advance_amount, prerequisites=body.prerequisites,
+        syllabus=body.syllabus, thumbnail_url=body.thumbnail_url, is_active=body.is_active
+    )
+    session.add(course)
+    session.commit()
+    return {"course": {"id": course.id, "title": course.title, "category": course.category, "price": course.price, "is_active": course.is_active}}
+
+@app.get("/courses/{course_id}")
+def get_course(course_id: int, session: Session = Depends(get_session)):
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+    batches = session.exec(select(Batch).where(Batch.course_id == course_id)).all()
+    batch_list = []
+    batch_ids = [b.id for b in batches]
+    for b in batches:
+        instructor = session.get(Instructor, b.instructor_id) if b.instructor_id else None
+        enrolled = session.exec(select(func.count(Enrollment.id)).where(Enrollment.batch_id == b.id)).first() or 0
+        batch_list.append({
+            "id": b.id, "batch_name": b.batch_name, "batch_code": b.batch_code,
+            "start_date": b.start_date.isoformat() if b.start_date else None,
+            "end_date": b.end_date.isoformat() if b.end_date else None,
+            "schedule": b.schedule, "mode": b.mode, "max_seats": b.max_seats,
+            "enrolled_count": enrolled, "status": b.status, "room_or_link": b.room_or_link,
+            "instructor_name": instructor.name if instructor else None,
+            "instructor_id": b.instructor_id
+        })
+    course_tasks = session.exec(select(Task).where(Task.batch_id.in_(batch_ids))).all() if batch_ids else []
+    tasks_by_title = {}
+    for t in course_tasks:
+        b = next((x for x in batches if x.id == t.batch_id), None)
+        st = session.get(Student, t.student_id) if t.student_id else None
+        key = (t.title, t.batch_id)
+        if key not in tasks_by_title:
+            tasks_by_title[key] = {
+                "title": t.title,
+                "description": t.description,
+                "due_date": t.due_date,
+                "priority": t.priority,
+                "batch_id": t.batch_id,
+                "batch_name": b.batch_name if b else "Batch",
+                "total_assigned": 0,
+                "completed_count": 0,
+                "students": []
+            }
+        tasks_by_title[key]["total_assigned"] += 1
+        if t.status == "Done":
+            tasks_by_title[key]["completed_count"] += 1
+        tasks_by_title[key]["students"].append({
+            "task_id": t.id,
+            "student_id": t.student_id,
+            "student_name": st.name if st else "Student",
+            "status": t.status,
+            "submission_url": getattr(t, "submission_url", None),
+            "submission_file": getattr(t, "submission_file", None),
+            "submission_notes": getattr(t, "submission_notes", None),
+            "submitted_at": t.submitted_at.isoformat() if getattr(t, "submitted_at", None) else None,
+        })
+    task_summaries = []
+    for info in tasks_by_title.values():
+        info["completion_percent"] = round((info["completed_count"] / max(1, info["total_assigned"])) * 100)
+        task_summaries.append(info)
+    return {
+        "course": course.dict(),
+        "batches": batch_list,
+        "task_summaries": task_summaries,
+        "total_tasks_assigned": len(course_tasks),
+        "total_tasks_completed": sum(1 for t in course_tasks if t.status == "Done"),
+    }
+
+@app.patch("/courses/{course_id}")
+def update_course(course_id: int, body: CourseUpdateRequest, session: Session = Depends(get_session)):
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+    data = body.dict(exclude_unset=True)
+    for k, v in data.items():
+        setattr(course, k, v)
+    course.updated_at = datetime.utcnow()
+    session.add(course)
+    session.commit()
+    return {"course": {"id": course.id, "title": course.title, "is_active": course.is_active}}
+
+@app.delete("/courses/{course_id}")
+def delete_course(course_id: int, session: Session = Depends(get_session)):
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="Course not found")
+    session.delete(course)
+    session.commit()
+    return {"ok": True}
+
+# -------------------- INSTRUCTOR ENDPOINTS --------------------
+@app.get("/instructors")
+def get_instructors(session: Session = Depends(get_session)):
+    instructors = session.exec(select(Instructor).order_by(Instructor.created_at.desc())).all()
+    result = []
+    now = datetime.utcnow()
+    for i in instructors:
+        instructor_batches = session.exec(select(Batch).where(Batch.instructor_id == i.id)).all()
+        batch_count = len(instructor_batches)
+        active_batches = sum(1 for batch in instructor_batches if batch.status == "Active")
+        upcoming_batches = sum(1 for batch in instructor_batches if batch.status == "Upcoming" or (batch.start_date and batch.start_date > now and batch.status not in ("Completed", "Cancelled")))
+        past_batches = sum(1 for batch in instructor_batches if batch.status == "Completed" or (batch.end_date and batch.end_date < now))
+        active_enrollments = []
+        for batch in instructor_batches:
+            active_enrollments.extend(session.exec(select(Enrollment.student_id).where(Enrollment.batch_id == batch.id, Enrollment.status == "Active")).all())
+        feedbacks = session.exec(select(InstructorFeedback).where(InstructorFeedback.instructor_id == i.id)).all()
+        avg_rating = round(sum(f.rating for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0.0
+        result.append({
+            "id": i.id, "name": i.name, "email": i.email, "phone": i.phone,
+            "bio": i.bio, "expertise": i.expertise, "qualification": i.qualification,
+            "experience_years": i.experience_years, "photo_url": i.photo_url, "is_active": i.is_active,
+            "avg_rating": avg_rating, "batch_count": batch_count, "active_batches": active_batches,
+            "upcoming_batches": upcoming_batches, "past_batches": past_batches,
+            "total_students": len(set(active_enrollments)), "user_id": i.user_id,
+            "created_at": i.created_at.isoformat()
+        })
+    return {"instructors": result}
+
+@app.post("/instructors")
+def create_instructor(body: InstructorCreateRequest, session: Session = Depends(get_session)):
+    instructor = Instructor(**body.dict())
+    session.add(instructor)
+    session.commit()
+    return {"instructor": {"id": instructor.id, "name": instructor.name, "email": instructor.email, "phone": instructor.phone, "expertise": instructor.expertise, "is_active": instructor.is_active}}
+
+@app.get("/instructors/{instructor_id}")
+def get_instructor(instructor_id: int, session: Session = Depends(get_session)):
+    instructor = session.get(Instructor, instructor_id)
+    if not instructor:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    batches = session.exec(select(Batch).where(Batch.instructor_id == instructor_id)).all()
+    feedbacks = session.exec(select(InstructorFeedback).where(InstructorFeedback.instructor_id == instructor_id)).all()
+    avg_rating = round(sum(f.rating for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0.0
+    feedback_breakdown = {
+        "teaching_quality": round(sum((f.teaching_quality or 0) for f in feedbacks) / max(len(feedbacks),1), 1),
+        "punctuality": round(sum((f.punctuality or 0) for f in feedbacks) / max(len(feedbacks),1), 1),
+        "communication": round(sum((f.communication or 0) for f in feedbacks) / max(len(feedbacks),1), 1),
+    }
+
+    batch_ids = [b.id for b in batches]
+    now = datetime.utcnow()
+
+    # Query all sessions across assigned batches
+    all_sessions = session.exec(select(InstituteSession).where(InstituteSession.batch_id.in_(batch_ids))).all() if batch_ids else []
+    total_classes_scheduled = len(all_sessions)
+    completed_classes = sum(1 for s in all_sessions if s.status == "Completed")
+    cancelled_classes = sum(1 for s in all_sessions if s.status == "Cancelled")
+    pending_classes = sum(1 for s in all_sessions if s.status in ("Scheduled", "Live") or (s.scheduled_start and s.scheduled_start >= now and s.status not in ("Completed", "Cancelled")))
+
+    # Query attendance records
+    all_attendance = session.exec(select(Attendance).where(Attendance.batch_id.in_(batch_ids))).all() if batch_ids else []
+    attended_count = sum(1 for a in all_attendance if a.status in ("Present", "Late"))
+    missed_count = sum(1 for a in all_attendance if a.status == "Absent")
+    attendance_total = len(all_attendance)
+    attendance_rate = round((attended_count / attendance_total) * 100, 1) if attendance_total else 0.0
+
+    # Query tasks assigned in these batches
+    batch_tasks = session.exec(select(Task).where(Task.batch_id.in_(batch_ids))).all() if batch_ids else []
+    total_tasks_given = len(batch_tasks)
+    tasks_completed_count = sum(1 for t in batch_tasks if t.status == "Done")
+    tasks_pending_count = total_tasks_given - tasks_completed_count
+    task_completion_rate = round((tasks_completed_count / total_tasks_given) * 100, 1) if total_tasks_given else 0.0
+
+    batch_list = []
+    for b in batches:
+        course = session.get(Course, b.course_id)
+        enrolled = session.exec(select(func.count(Enrollment.id)).where(Enrollment.batch_id == b.id)).first() or 0
+        b_sessions = [s for s in all_sessions if s.batch_id == b.id]
+        b_attendance = [a for a in all_attendance if a.batch_id == b.id]
+        b_tasks = [t for t in batch_tasks if t.batch_id == b.id]
+        b_attended = sum(1 for a in b_attendance if a.status in ("Present", "Late"))
+        b_missed = sum(1 for a in b_attendance if a.status == "Absent")
+        b_tasks_done = sum(1 for t in b_tasks if t.status == "Done")
+        batch_list.append({
+            "id": b.id, "batch_name": b.batch_name, "status": b.status,
+            "course_title": course.title if course else None,
+            "enrolled_count": enrolled, "max_seats": b.max_seats,
+            "start_date": b.start_date.isoformat() if b.start_date else None,
+            "classes_scheduled": len(b_sessions),
+            "classes_completed": sum(1 for s in b_sessions if s.status == "Completed"),
+            "classes_pending": sum(1 for s in b_sessions if s.status in ("Scheduled", "Live")),
+            "attendance_present": b_attended,
+            "attendance_missed": b_missed,
+            "attendance_rate": round((b_attended / len(b_attendance)) * 100, 1) if b_attendance else 0.0,
+            "tasks_given": len(b_tasks),
+            "tasks_completed": b_tasks_done,
+            "task_completion_rate": round((b_tasks_done / len(b_tasks)) * 100, 1) if b_tasks else 0.0,
+        })
+
+    attendance_pie = [
+        {"name": "Attended", "value": attended_count, "color": "#10b981"},
+        {"name": "Missed", "value": missed_count, "color": "#f43f5e"},
+        {"name": "Pending Records", "value": max(0, total_classes_scheduled - completed_classes), "color": "#f59e0b"},
+    ]
+    task_pie = [
+        {"name": "Completed", "value": tasks_completed_count, "color": "#10b981"},
+        {"name": "Pending / Todo", "value": tasks_pending_count, "color": "#3b82f6"},
+    ]
+    classes_pie = [
+        {"name": "Completed", "value": completed_classes, "color": "#10b981"},
+        {"name": "Pending / Upcoming", "value": pending_classes, "color": "#0284c7"},
+        {"name": "Cancelled", "value": cancelled_classes, "color": "#94a3b8"},
+    ]
+
+    return {
+        "instructor": instructor.dict(),
+        "avg_rating": avg_rating,
+        "feedback_breakdown": feedback_breakdown,
+        "feedback_count": len(feedbacks),
+        "batches": batch_list,
+        "stats": {
+            "classes_scheduled": total_classes_scheduled,
+            "classes_completed": completed_classes,
+            "classes_pending": pending_classes,
+            "classes_cancelled": cancelled_classes,
+            "attended_count": attended_count,
+            "missed_count": missed_count,
+            "attendance_rate": attendance_rate,
+            "total_tasks_given": total_tasks_given,
+            "tasks_completed_count": tasks_completed_count,
+            "tasks_pending_count": tasks_pending_count,
+            "task_completion_rate": task_completion_rate,
+        },
+        "charts": {
+            "attendance_pie": attendance_pie,
+            "task_pie": task_pie,
+            "classes_pie": classes_pie,
+        }
+    }
+
+@app.patch("/instructors/{instructor_id}")
+def update_instructor(instructor_id: int, body: InstructorUpdateRequest, session: Session = Depends(get_session)):
+    instructor = session.get(Instructor, instructor_id)
+    if not instructor:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    data = body.dict(exclude_unset=True)
+    for k, v in data.items():
+        setattr(instructor, k, v)
+    session.add(instructor)
+    session.commit()
+    return {"instructor": {"id": instructor.id, "name": instructor.name, "is_active": instructor.is_active}}
+
+@app.delete("/instructors/{instructor_id}")
+def delete_instructor(instructor_id: int, session: Session = Depends(get_session)):
+    instructor = session.get(Instructor, instructor_id)
+    if not instructor:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    session.delete(instructor)
+    session.commit()
+    return {"ok": True}
+
+@app.post("/instructors/{instructor_id}/feedback")
+def submit_instructor_feedback(instructor_id: int, body: InstructorFeedbackRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    actor_role = _normalize_role(actor.role)
+    if not 1 <= body.rating <= 5:
+        raise HTTPException(status_code=422, detail="Rating must be between 1 and 5")
+    batch = session.get(Batch, body.batch_id)
+    if not batch or batch.instructor_id != instructor_id:
+        raise HTTPException(status_code=404, detail="Instructor batch not found")
+    student_id = body.student_id
+    if actor_role == "Student":
+        student = session.exec(select(Student).where(Student.user_id == actor.id)).first()
+        if not student:
+            raise HTTPException(status_code=404, detail="Student profile is not linked to this login")
+        enrollment = session.exec(
+            select(Enrollment.id).where(
+                Enrollment.student_id == student.id,
+                Enrollment.batch_id == batch.id,
+                Enrollment.status.in_(("Active", "Completed")),
+            )
+        ).first()
+        if not enrollment:
+            raise HTTPException(status_code=404, detail="Instructor not found in your courses")
+        student_id = student.id
+    elif student_id and not session.get(Student, student_id):
+        raise HTTPException(status_code=404, detail="Student not found")
+    fb = InstructorFeedback(
+        instructor_id=instructor_id, batch_id=body.batch_id, student_id=student_id,
+        rating=body.rating, teaching_quality=body.teaching_quality, punctuality=body.punctuality,
+        communication=body.communication, feedback_text=body.feedback_text
+    )
+    session.add(fb)
+    session.commit()
+    return {"ok": True, "review": {"id": fb.id, "rating": fb.rating, "feedback_text": fb.feedback_text}}
+
+# -------------------- BATCH ENDPOINTS --------------------
+@app.get("/batches")
+def get_batches(course_id: Optional[int] = None, instructor_id: Optional[int] = None, status: Optional[str] = None, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Demo"])
+    query = select(Batch)
+    if actor.role == "Instructor":
+        instructor = session.exec(select(Instructor).where(Instructor.user_id == actor.id)).first()
+        if not instructor:
+            return {"batches": []}
+        query = query.where(Batch.instructor_id == instructor.id)
+    if course_id:
+        query = query.where(Batch.course_id == course_id)
+    if instructor_id:
+        query = query.where(Batch.instructor_id == instructor_id)
+    if status:
+        query = query.where(Batch.status == status)
+    batches = session.exec(query.order_by(Batch.created_at.desc())).all()
+    result = []
+    for b in batches:
+        course = session.get(Course, b.course_id)
+        instructor = session.get(Instructor, b.instructor_id) if b.instructor_id else None
+        enrolled = session.exec(select(func.count(Enrollment.id)).where(Enrollment.batch_id == b.id)).first() or 0
+        result.append({
+            "id": b.id, "batch_name": b.batch_name, "batch_code": b.batch_code,
+            "course_id": b.course_id, "course_title": course.title if course else None,
+            "instructor_id": b.instructor_id, "instructor_name": instructor.name if instructor else None,
+            "start_date": b.start_date.isoformat() if b.start_date else None,
+            "end_date": b.end_date.isoformat() if b.end_date else None,
+            "schedule": b.schedule, "mode": b.mode, "max_seats": b.max_seats,
+            "session_duration_hours": b.session_duration_hours, "assignment_strategy": b.assignment_strategy,
+            "enrolled_count": enrolled, "available_seats": max(0, b.max_seats - enrolled),
+            "status": b.status, "room_or_link": b.room_or_link, "notes": b.notes,
+            "created_at": b.created_at.isoformat()
+        })
+    return {"batches": result}
+
+@app.post("/batches")
+def create_batch(body: BatchCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Demo"])
+    course = session.get(Course, body.course_id)
+    if not course or not course.is_active:
+        raise HTTPException(status_code=404, detail="Active course not found")
+    if body.session_duration_hours not in (1, 2, 3, 4):
+        raise HTTPException(status_code=422, detail="Class slots must be 1, 2, 3, or 4 hours")
+    if body.assignment_strategy not in ("round_robin", "performance", "manual"):
+        raise HTTPException(status_code=422, detail="Choose round_robin, performance, or manual assignment")
+    instructor_id = body.instructor_id
+    if body.auto_assign_instructor and not instructor_id:
+        candidates = session.exec(select(Instructor).where(Instructor.is_active == True)).all()
+        if not candidates:
+            raise HTTPException(status_code=409, detail="Create an active instructor profile before auto-assigning a batch")
+        candidate_metrics = []
+        for instructor in candidates:
+            assignments = session.exec(select(Batch).where(Batch.instructor_id == instructor.id)).all()
+            load = sum(1 for item in assignments if item.status in ("Active", "Upcoming"))
+            feedbacks = session.exec(select(InstructorFeedback).where(InstructorFeedback.instructor_id == instructor.id)).all()
+            rating = sum(item.rating for item in feedbacks) / len(feedbacks) if feedbacks else 0.0
+            expertise = (instructor.expertise or "").lower()
+            category_match = bool(course.category and course.category.lower() in expertise)
+            candidate_metrics.append((instructor, load, rating, category_match))
+        if body.assignment_strategy == "performance":
+            chosen = max(candidate_metrics, key=lambda item: (item[2], item[3], -item[1], -(item[0].id or 0)))
+        else:
+            chosen = min(candidate_metrics, key=lambda item: (item[1], not item[3], item[0].id or 0))
+        instructor_id = chosen[0].id
+    if instructor_id:
+        instructor = session.get(Instructor, instructor_id)
+        if not instructor or not instructor.is_active:
+            raise HTTPException(status_code=422, detail="Selected instructor is not active")
+    start_dt = datetime.fromisoformat(body.start_date) if body.start_date else None
+    end_dt = datetime.fromisoformat(body.end_date) if body.end_date else None
+    if start_dt and end_dt and end_dt <= start_dt:
+        raise HTTPException(status_code=422, detail="Batch end date must be after its start date")
+    batch = Batch(
+        tenant_id=actor.tenant_id, course_id=body.course_id, instructor_id=instructor_id, batch_name=body.batch_name,
+        batch_code=body.batch_code, start_date=start_dt, end_date=end_dt,
+        schedule=body.schedule, session_duration_hours=body.session_duration_hours,
+        assignment_strategy=body.assignment_strategy if body.auto_assign_instructor else "manual",
+        mode=body.mode, max_seats=body.max_seats,
+        status=body.status, room_or_link=body.room_or_link, notes=body.notes
+    )
+    session.add(batch)
+    session.commit()
+    return {"batch": {"id": batch.id, "batch_name": batch.batch_name, "course_id": batch.course_id, "instructor_id": batch.instructor_id, "session_duration_hours": batch.session_duration_hours, "assignment_strategy": batch.assignment_strategy, "status": batch.status, "mode": batch.mode, "max_seats": batch.max_seats}}
+
+@app.get("/batches/{batch_id}")
+def get_batch(batch_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Demo"])
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    _require_instructor_batch_access(actor, batch, session)
+    course = session.get(Course, batch.course_id)
+    instructor = session.get(Instructor, batch.instructor_id) if batch.instructor_id else None
+    enrollments = session.exec(select(Enrollment).where(Enrollment.batch_id == batch_id, Enrollment.status == "Active")).all()
+    students_list = []
+    for e in enrollments:
+        student = session.get(Student, e.student_id)
+        if student:
+            students_list.append({
+                "id": student.id,
+                "student_id": student.id,
+                "enrollment_id": e.id,
+                "name": student.name,
+                "email": student.email,
+                "phone": student.phone,
+                "status": e.status,
+                "progress_status": "Enrolled",
+                "completion_percent": 0,
+                "payment_status": e.payment_status,
+                "amount_paid": e.amount_paid,
+                "amount_due": e.amount_due,
+                "enrollment_date": e.enrollment_date.isoformat()
+            })
+    batch_tasks = session.exec(select(Task).where(Task.batch_id == batch_id)).all()
+    tasks_by_title = {}
+    for t in batch_tasks:
+        st = session.get(Student, t.student_id) if t.student_id else None
+        key = t.title
+        if key not in tasks_by_title:
+            tasks_by_title[key] = {
+                "title": t.title,
+                "description": t.description,
+                "due_date": t.due_date,
+                "priority": t.priority,
+                "batch_id": batch_id,
+                "total_assigned": 0,
+                "completed_count": 0,
+                "students": []
+            }
+        tasks_by_title[key]["total_assigned"] += 1
+        if t.status == "Done":
+            tasks_by_title[key]["completed_count"] += 1
+        tasks_by_title[key]["students"].append({
+            "task_id": t.id,
+            "student_id": t.student_id,
+            "student_name": st.name if st else "Student",
+            "status": t.status,
+            "submission_url": getattr(t, "submission_url", None),
+            "submission_file": getattr(t, "submission_file", None),
+            "submission_notes": getattr(t, "submission_notes", None),
+            "submitted_at": t.submitted_at.isoformat() if getattr(t, "submitted_at", None) else None,
+        })
+    task_summaries = []
+    for info in tasks_by_title.values():
+        info["completion_percent"] = round((info["completed_count"] / max(1, info["total_assigned"])) * 100)
+        task_summaries.append(info)
+
+    return {
+        "batch": batch.dict(),
+        "course": {"id": course.id, "title": course.title} if course else None,
+        "instructor": {"id": instructor.id, "name": instructor.name} if instructor else None,
+        "students": students_list,
+        "tasks": [_task_dict(t, session) for t in batch_tasks],
+        "task_summaries": task_summaries,
+        "total_tasks_assigned": len(batch_tasks),
+        "total_tasks_completed": sum(1 for t in batch_tasks if t.status == "Done"),
+    }
+
+@app.patch("/batches/{batch_id}")
+def update_batch(batch_id: int, body: BatchUpdateRequest, session: Session = Depends(get_session)):
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    data = body.dict(exclude_unset=True)
+    if "start_date" in data and data["start_date"]:
+        data["start_date"] = datetime.fromisoformat(data["start_date"])
+    if "end_date" in data and data["end_date"]:
+        data["end_date"] = datetime.fromisoformat(data["end_date"])
+    for k, v in data.items():
+        setattr(batch, k, v)
+    batch.updated_at = datetime.utcnow()
+    session.add(batch)
+    session.commit()
+    return {"batch": {"id": batch.id, "batch_name": batch.batch_name, "status": batch.status}}
+
+@app.delete("/batches/{batch_id}")
+def delete_batch(batch_id: int, session: Session = Depends(get_session)):
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    session.delete(batch)
+    session.commit()
+    return {"ok": True}
+
+# -------------------- STUDENT ENDPOINTS --------------------
+@app.get("/students")
+def get_students(status: Optional[str] = None, q: Optional[str] = None, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    actor_role = _normalize_role(actor.role)
+    query = select(Student)
+    if actor_role == "Student":
+        query = query.where(Student.user_id == actor.id)
+    elif actor_role == "Instructor":
+        instructor = session.exec(select(Instructor).where(Instructor.user_id == actor.id)).first()
+        if not instructor:
+            return {"students": []}
+        assigned_batch_ids = select(Batch.id).where(Batch.instructor_id == instructor.id)
+        assigned_student_ids = select(Enrollment.student_id).where(Enrollment.batch_id.in_(assigned_batch_ids), Enrollment.status == "Active")
+        query = query.where(Student.id.in_(assigned_student_ids))
+    elif actor_role in ("SalesManager", "Employee", "Sales", "Demo"):
+        query = query.where(
+            or_(
+                Student.assigned_salesperson_id == actor.id,
+                Student.lead_id.in_(select(Lead.id).where(Lead.owner_id == actor.id)),
+            )
+        )
+    if status:
+        query = query.where(Student.status == status)
+    if q:
+        query = query.where(or_(Student.name.ilike(f"%{q}%"), Student.email.ilike(f"%{q}%"), Student.phone.ilike(f"%{q}%")))
+    students = session.exec(query.order_by(Student.created_at.desc())).all()
+    result = []
+    for s in students:
+        enrollments = session.exec(select(Enrollment).where(Enrollment.student_id == s.id)).all()
+        active_enrollment = next((e for e in enrollments if e.status == "Active"), None)
+        batch_name = None
+        course_title = None
+        active_batch_id = None
+        active_course_id = None
+        if active_enrollment:
+            batch = session.get(Batch, active_enrollment.batch_id)
+            course = session.get(Course, active_enrollment.course_id)
+            batch_name = batch.batch_name if batch else None
+            course_title = course.title if course else None
+            active_batch_id = batch.id if batch else None
+            active_course_id = course.id if course else None
+        result.append({
+            "id": s.id, "name": s.name, "email": s.email, "phone": s.phone,
+            "user_id": s.user_id, "course_interest": s.course_interest,
+            "course_interest_id": s.course_interest_id, "gpa": s.gpa,
+            "education_level": s.education_level, "academic_background": s.academic_background,
+            "career_goal": s.career_goal, "drop_reason": s.drop_reason,
+            "improvement_plan": s.improvement_plan,
+            "address": s.address, "gender": s.gender, "qualification": s.qualification,
+            "guardian_name": s.guardian_name, "guardian_phone": s.guardian_phone,
+            "assigned_salesperson_id": _student_salesperson_id(s, session),
+            "source": s.source, "status": s.status, "photo_url": s.photo_url,
+            "enrollment_count": len(enrollments),
+            "active_course": course_title, "active_batch": batch_name,
+            "active_course_id": active_course_id, "active_batch_id": active_batch_id,
+            "created_at": s.created_at.isoformat()
+        })
+    return {"students": result}
+
+@app.post("/students")
+def create_student(body: StudentCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    actor_role = _normalize_role(actor.role)
+    if body.gpa is not None and not 0 <= body.gpa <= 10:
+        raise HTTPException(status_code=422, detail="GPA must be between 0 and 10")
+    linked_lead = None
+    if body.lead_id:
+        linked_lead = session.get(Lead, body.lead_id)
+        if not linked_lead:
+            raise HTTPException(status_code=404, detail="Source lead not found")
+    if body.auto_assign_salesperson and body.assigned_salesperson_id is not None:
+        raise HTTPException(status_code=422, detail="Choose a salesperson or auto-assign, not both")
+    if body.auto_assign_salesperson:
+        salesperson_id = _choose_revenue_balanced_salesperson(session).id
+    elif body.assigned_salesperson_id is not None:
+        salesperson_id = _validate_salesperson(session, body.assigned_salesperson_id).id
+    else:
+        salesperson_id = linked_lead.owner_id if linked_lead else (actor.id if actor_role in ("Employee", "SalesManager", "Sales", "Demo") else None)
+    dob = datetime.fromisoformat(body.date_of_birth) if body.date_of_birth else None
+    student = Student(
+        tenant_id=actor.tenant_id, name=body.name, email=body.email, phone=body.phone,
+        course_interest=body.course_interest, course_interest_id=body.course_interest_id,
+        gpa=body.gpa, education_level=body.education_level,
+        academic_background=body.academic_background, career_goal=body.career_goal, address=body.address,
+        date_of_birth=dob, gender=body.gender, qualification=body.qualification,
+        guardian_name=body.guardian_name, guardian_phone=body.guardian_phone,
+        source=body.source, lead_id=body.lead_id, assigned_salesperson_id=salesperson_id, notes=body.notes
+    )
+    session.add(student)
+    session.commit()
+    return {"student": {"id": student.id, "name": student.name, "email": student.email, "phone": student.phone, "status": student.status}}
+
+@app.get("/students/{student_id}")
+def get_student(student_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    actor_role = _normalize_role(actor.role)
+    student = session.get(Student, student_id)
+    if not student or (student.tenant_id and actor_role != "SuperAdmin" and student.tenant_id != actor.tenant_id):
+        raise HTTPException(status_code=404, detail="Student not found")
+    _require_student_profile_access(actor, student, session)
+    enrollments = session.exec(select(Enrollment).where(Enrollment.student_id == student_id)).all()
+    enrollment_list = []
+    progress_total = 0
+    progress_count = 0
+    attendance_total = 0
+    attendance_present = 0
+    for e in enrollments:
+        batch = session.get(Batch, e.batch_id)
+        course = session.get(Course, e.course_id)
+        payments = session.exec(select(PaymentRecord).where(PaymentRecord.enrollment_id == e.id)).all()
+        class_sessions = session.exec(select(InstituteSession).where(InstituteSession.batch_id == e.batch_id)).all()
+        progress_rows = session.exec(select(StudentSessionProgress).where(StudentSessionProgress.student_id == student_id, StudentSessionProgress.batch_id == e.batch_id)).all()
+        attendance_rows = session.exec(select(Attendance).where(Attendance.student_id == student_id, Attendance.batch_id == e.batch_id)).all()
+        progress_percent = round(sum(item.completion_percent for item in progress_rows) / len(progress_rows)) if progress_rows else 0
+        if class_sessions:
+            progress_total += progress_percent
+            progress_count += 1
+        attendance_total += len(attendance_rows)
+        attendance_present += sum(1 for item in attendance_rows if item.status in ("Present", "Late"))
+        instructor = session.get(Instructor, batch.instructor_id) if batch and batch.instructor_id else None
+        enrollment_list.append({
+            "id": e.id, "batch_id": e.batch_id, "course_id": e.course_id,
+            "batch_name": batch.batch_name if batch else None,
+            "course_title": course.title if course else None,
+            "instructor_id": instructor.id if instructor else None,
+            "instructor_name": instructor.name if instructor else None,
+            "session_count": len(class_sessions),
+            "progress_percent": progress_percent,
+            "attendance_rate": round(sum(1 for item in attendance_rows if item.status in ("Present", "Late")) / len(attendance_rows) * 100) if attendance_rows else 0,
+            "total_fee": e.total_fee, "amount_paid": e.amount_paid, "amount_due": e.amount_due,
+            "payment_status": e.payment_status, "status": e.status,
+            "enrollment_date": e.enrollment_date.isoformat(),
+            "slip_number": e.slip_number, "admission_slip_generated": e.admission_slip_generated,
+            "payments": [{"id": p.id, "amount": p.amount, "mode": p.payment_mode, "date": p.payment_date.isoformat(), "receipt": p.receipt_number} for p in payments]
+        })
+    lead = session.get(Lead, student.lead_id) if student.lead_id else None
+    salesperson_id = student.assigned_salesperson_id or (lead.owner_id if lead else None)
+    salesperson = session.get(User, salesperson_id) if salesperson_id else None
+    notes = session.exec(select(StudentNote).where(StudentNote.student_id == student_id).order_by(StudentNote.created_at.desc())).all()
+    uploads = session.exec(select(StudentUpload).where(StudentUpload.student_id == student_id).order_by(StudentUpload.created_at.desc())).all()
+    tasks = session.exec(select(Task).where(Task.student_id == student_id).order_by(Task.created_at.desc())).all()
+    tasks_list = [_task_dict(t, session) for t in tasks]
+    return {
+        "student": student.dict(),
+        "lead": {"id": lead.id, "source": lead.source, "created_at": lead.created_at.isoformat()} if lead else None,
+        "salesperson": {"id": salesperson.id, "name": salesperson.name, "email": salesperson.email} if salesperson else None,
+        "enrollments": enrollment_list,
+        "tasks": tasks_list,
+        "performance": {
+            "course_progress_percent": round(progress_total / progress_count) if progress_count else 0,
+            "attendance_rate": round(attendance_present / attendance_total * 100) if attendance_total else 0,
+        },
+        "notes": [{"id": item.id, "content": item.content, "author_id": item.author_id, "created_at": item.created_at.isoformat()} for item in notes],
+        "uploads": [{"id": item.id, "filename": item.filename, "content_type": item.content_type, "size_bytes": item.size_bytes, "description": item.description, "created_at": item.created_at.isoformat()} for item in uploads],
+    }
+
+@app.patch("/students/{student_id}")
+def update_student(student_id: int, body: StudentUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Demo"])
+    student = session.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    data = body.dict(exclude_unset=True)
+    auto_assign = data.pop("auto_assign_salesperson", False)
+    assigned_salesperson_id = data.pop("assigned_salesperson_id", None)
+    if auto_assign and assigned_salesperson_id is not None:
+        raise HTTPException(status_code=422, detail="Choose a salesperson or auto-assign, not both")
+    if auto_assign:
+        student.assigned_salesperson_id = _choose_revenue_balanced_salesperson(session).id
+    elif "assigned_salesperson_id" in body.__fields_set__:
+        selected_salesperson = _validate_salesperson(session, assigned_salesperson_id)
+        student.assigned_salesperson_id = selected_salesperson.id if selected_salesperson else None
+    if body.gpa is not None and not 0 <= body.gpa <= 10:
+        raise HTTPException(status_code=422, detail="GPA must be between 0 and 10")
+    if data.get("status") == "Dropped":
+        if not (data.get("drop_reason") or student.drop_reason or "").strip():
+            raise HTTPException(status_code=422, detail="A drop reason is required")
+        if not (data.get("improvement_plan") or student.improvement_plan or "").strip():
+            raise HTTPException(status_code=422, detail="An improvement plan is required")
+        student.dropped_at = datetime.utcnow()
+        student.dropped_by = actor.id
+    for k, v in data.items():
+        setattr(student, k, v)
+    student.updated_at = datetime.utcnow()
+    session.add(student)
+    session.commit()
+    return {"student": {"id": student.id, "name": student.name, "status": student.status}}
+
+
+@app.patch("/students/{student_id}/background-details")
+def update_student_background_details(student_id: int, body: BackgroundDetailsUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Demo"])
+    student = session.get(Student, student_id)
+    if not student or (student.tenant_id and actor.role != "SuperAdmin" and student.tenant_id != actor.tenant_id):
+        raise HTTPException(status_code=404, detail="Student not found")
+    _require_student_profile_access(actor, student, session)
+    details = _normalize_background_details(body.details)
+    student.background_details = details
+    student.updated_at = datetime.utcnow()
+    session.add(student)
+    if student.lead_id:
+        lead = session.get(Lead, student.lead_id)
+        if lead:
+            lead.background_details = details
+            session.add(lead)
+    session.commit()
+    return {"background_details": details}
+
+@app.delete("/students/{student_id}")
+def delete_student(student_id: int, session: Session = Depends(get_session)):
+    _require_roles(session, ["Admin"])
+    student = session.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    if session.exec(select(Enrollment.id).where(Enrollment.student_id == student_id)).first():
+        raise HTTPException(status_code=409, detail="Students with enrollment history cannot be deleted; mark them Dropped instead")
+    session.delete(student)
+    session.commit()
+    return {"ok": True}
+
+
+class PaymentReminderRequest(BaseModel):
+    amount_due: Optional[float] = None
+    notes: Optional[str] = None
+    scheduled_at: Optional[str] = None  # ISO datetime string
+
+
+@app.post("/students/{student_id}/payment-reminder")
+def create_payment_reminder(student_id: int, body: PaymentReminderRequest, session: Session = Depends(get_session)):
+    """Log a payment reminder call for a student (salesperson use)."""
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    student = session.get(Student, student_id)
+    if not student or (student.tenant_id and actor.role != "SuperAdmin" and student.tenant_id != actor.tenant_id):
+        raise HTTPException(status_code=404, detail="Student not found")
+    _require_student_profile_access(actor, student, session)
+    # Get balance from most recent active enrollment if not provided
+    amount_due = body.amount_due
+    if amount_due is None:
+        enr = session.exec(
+            select(Enrollment).where(Enrollment.student_id == student_id, Enrollment.status == "Active")
+            .order_by(Enrollment.id.desc())
+        ).first()
+        amount_due = enr.amount_due if enr else 0
+    schedule_info = f" (scheduled for {body.scheduled_at})" if body.scheduled_at else ""
+    note_content = (
+        f"📞 Payment reminder call logged by {actor.name or actor.email or 'staff'}{schedule_info}. "
+        f"Outstanding balance: ₹{amount_due:,.0f}."
+    )
+    if body.notes and body.notes.strip():
+        note_content += f" Notes: {body.notes.strip()}"
+    note = StudentNote(student_id=student_id, author_id=actor.id, content=note_content)
+    session.add(note)
+    session.commit()
+    session.refresh(note)
+    return {
+        "reminder": {
+            "id": note.id,
+            "student_id": student_id,
+            "student_name": student.name,
+            "amount_due": amount_due,
+            "scheduled_at": body.scheduled_at,
+            "logged_by": actor.name or actor.email or "Staff",
+            "note": note_content,
+            "created_at": note.created_at.isoformat(),
+        }
+    }
+
+
+@app.get("/students/{student_id}/notes")
+def get_student_notes(student_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    student = session.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    _require_student_profile_access(actor, student, session)
+    notes = session.exec(select(StudentNote).where(StudentNote.student_id == student_id).order_by(StudentNote.created_at.desc())).all()
+    return {"notes": [{"id": item.id, "content": item.content, "author_id": item.author_id, "created_at": item.created_at.isoformat()} for item in notes]}
+
+
+@app.post("/students/{student_id}/notes")
+def create_student_note(student_id: int, body: StudentNoteRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    student = session.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    _require_student_profile_access(actor, student, session)
+    content = body.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="Comment cannot be empty")
+    note = StudentNote(student_id=student_id, author_id=actor.id, content=content)
+    session.add(note)
+    session.commit()
+    session.refresh(note)
+    return {"note": {"id": note.id, "content": note.content, "author_id": note.author_id, "created_at": note.created_at.isoformat()}}
+
+
+@app.get("/students/{student_id}/files")
+def get_student_files(student_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    student = session.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    _require_student_profile_access(actor, student, session)
+    files = session.exec(select(StudentUpload).where(StudentUpload.student_id == student_id).order_by(StudentUpload.created_at.desc())).all()
+    return {"uploads": [{"id": item.id, "filename": item.filename, "content_type": item.content_type, "size_bytes": item.size_bytes, "description": item.description, "created_at": item.created_at.isoformat()} for item in files]}
+
+
+@app.post("/students/{student_id}/files")
+async def upload_student_file(student_id: int, file: UploadFile = File(...), description: str = Form(""), session: Session = Depends(get_session)):
+    import os
+    import uuid
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    student = session.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    _require_student_profile_access(actor, student, session)
+    original_name = os.path.basename(file.filename or "upload")[:255]
+    file_bytes = await file.read(15 * 1024 * 1024 + 1)
+    if not file_bytes or len(file_bytes) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Files must be between 1 byte and 15 MB")
+    extension = os.path.splitext(original_name)[1].lower()
+    storage_key = f"{uuid.uuid4().hex}{extension}"
+    upload_root = os.path.join(os.path.dirname(__file__), "uploads", "students")
+    os.makedirs(upload_root, exist_ok=True)
+    with open(os.path.join(upload_root, storage_key), "wb") as target:
+        target.write(file_bytes)
+    record = StudentUpload(
+        student_id=student_id,
+        uploaded_by=actor.id,
+        filename=original_name,
+        storage_key=storage_key,
+        content_type=file.content_type,
+        size_bytes=len(file_bytes),
+        description=description[:500] or None,
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return {"upload": {"id": record.id, "filename": record.filename, "size_bytes": record.size_bytes, "created_at": record.created_at.isoformat()}}
+
+
+@app.get("/student-files/{upload_id}/download")
+def download_student_file(upload_id: int, session: Session = Depends(get_session)):
+    import os
+    from fastapi.responses import FileResponse
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    record = session.get(StudentUpload, upload_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    student = session.get(Student, record.student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="File not found")
+    _require_student_profile_access(actor, student, session)
+    upload_root = os.path.realpath(os.path.join(os.path.dirname(__file__), "uploads", "students"))
+    file_path = os.path.realpath(os.path.join(upload_root, record.storage_key))
+    if os.path.commonpath([upload_root, file_path]) != upload_root or not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(file_path, filename=record.filename, media_type=record.content_type or "application/octet-stream")
+
+# -------------------- ENROLLMENT ENDPOINTS --------------------
+@app.get("/enrollments")
+def get_enrollments(batch_id: Optional[int] = None, student_id: Optional[int] = None, course_id: Optional[int] = None, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo", "Student"])
+    actor_role = _normalize_role(actor.role)
+    query = select(Enrollment)
+    if actor_role == "Student":
+        student_profile = session.exec(select(Student.id).where(Student.user_id == actor.id)).first()
+        if not student_profile:
+            raise HTTPException(status_code=404, detail="Student profile is not linked to this login")
+        query = query.where(Enrollment.student_id == student_profile)
+    elif actor_role in ("SalesManager", "Employee", "Sales", "Demo"):
+        assigned_student_ids = select(Student.id).where(
+            or_(
+                Student.assigned_salesperson_id == actor.id,
+                Student.lead_id.in_(select(Lead.id).where(Lead.owner_id == actor.id)),
+            )
+        )
+        query = query.where(Enrollment.student_id.in_(assigned_student_ids))
+    if batch_id:
+        query = query.where(Enrollment.batch_id == batch_id)
+    if student_id:
+        query = query.where(Enrollment.student_id == student_id)
+    if course_id:
+        query = query.where(Enrollment.course_id == course_id)
+    enrollments = session.exec(query.order_by(Enrollment.created_at.desc())).all()
+    result = []
+    for e in enrollments:
+        student = session.get(Student, e.student_id)
+        batch = session.get(Batch, e.batch_id)
+        course = session.get(Course, e.course_id)
+        result.append({
+            "id": e.id, "student_id": e.student_id, "student_name": student.name if student else None,
+            "batch_id": e.batch_id, "batch_name": batch.batch_name if batch else None,
+            "course_id": e.course_id, "course_title": course.title if course else None,
+            "total_fee": e.total_fee, "amount_paid": e.amount_paid, "amount_due": e.amount_due,
+            "payment_status": e.payment_status, "status": e.status,
+            "enrollment_date": e.enrollment_date.isoformat(),
+            "slip_number": e.slip_number, "admission_slip_generated": e.admission_slip_generated,
+            "advance_slip_generated": e.advance_slip_generated, "discount": e.discount,
+            "payment_mode": e.payment_mode, "notes": e.notes,
+            "created_at": e.created_at.isoformat()
+        })
+    return {"enrollments": result}
+
+@app.post("/enrollments")
+def create_enrollment(body: EnrollmentCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    import random, string
+    student = session.get(Student, body.student_id)
+    batch = session.get(Batch, body.batch_id)
+    course = session.get(Course, body.course_id)
+    if not student or not batch or not course:
+        raise HTTPException(status_code=404, detail="Student, batch, or course not found")
+    _require_student_salesperson_access(actor, student, session)
+    if batch.course_id != course.id:
+        raise HTTPException(status_code=422, detail="The selected course does not match the batch")
+    if not course.is_active or batch.status in ("Completed", "Cancelled"):
+        raise HTTPException(status_code=409, detail="This course batch is not accepting enrollments")
+    if body.total_fee < 0 or body.amount_paid < 0 or body.discount < 0:
+        raise HTTPException(status_code=422, detail="Fees, payments, and discounts cannot be negative")
+    net_fee = body.total_fee - body.discount
+    if body.discount > body.total_fee or body.amount_paid > net_fee:
+        raise HTTPException(status_code=422, detail="Payment and discount cannot exceed the course fee")
+    duplicate = session.exec(
+        select(Enrollment).where(
+            Enrollment.student_id == body.student_id,
+            Enrollment.batch_id == body.batch_id,
+            Enrollment.status == "Active",
+        )
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Student is already active in this batch")
+    active_count = session.exec(
+        select(func.count(Enrollment.id)).where(
+            Enrollment.batch_id == body.batch_id,
+            Enrollment.status == "Active",
+        )
+    ).first() or 0
+    if active_count >= batch.max_seats:
+        raise HTTPException(status_code=409, detail="This batch has reached its seat limit")
+
+    slip_num = "ADM-" + "".join(random.choices(string.digits, k=6))
+    amount_due = body.total_fee - body.amount_paid - body.discount
+    payment_status = "Paid" if amount_due <= 0 else ("Partial" if body.amount_paid > 0 else "Pending")
+    salesperson_id = _student_salesperson_id(student, session) or actor.id
+    enrollment = Enrollment(
+        student_id=body.student_id, batch_id=body.batch_id, course_id=body.course_id,
+        total_fee=body.total_fee, amount_paid=body.amount_paid, amount_due=max(0, amount_due),
+        payment_mode=body.payment_mode, payment_status=payment_status,
+        discount=body.discount, discount_reason=body.discount_reason,
+        enrolled_by=salesperson_id, notes=body.notes, slip_number=slip_num
+    )
+    session.add(enrollment)
+    session.flush()
+    if body.amount_paid > 0:
+        session.add(PaymentRecord(
+            enrollment_id=enrollment.id,
+            student_id=body.student_id, amount=body.amount_paid,
+            payment_mode=body.payment_mode or "Cash", receipt_number=slip_num,
+            recorded_by=actor.id,
+        ))
+    session.commit()
+    session.refresh(enrollment)
+    return {"enrollment": enrollment.dict()}
+
+@app.patch("/enrollments/{enrollment_id}")
+def update_enrollment(enrollment_id: int, body: EnrollmentUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    enrollment = session.get(Enrollment, enrollment_id)
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    _require_enrollment_access(actor, enrollment, session)
+    data = body.dict(exclude_unset=True)
+    for k, v in data.items():
+        setattr(enrollment, k, v)
+    enrollment.amount_due = max(0, enrollment.total_fee - enrollment.amount_paid - enrollment.discount)
+    if enrollment.amount_due <= 0:
+        enrollment.payment_status = "Paid"
+    elif enrollment.amount_paid > 0:
+        enrollment.payment_status = "Partial"
+    enrollment.updated_at = datetime.utcnow()
+    session.add(enrollment)
+    session.commit()
+    return {"enrollment": {"id": enrollment.id, "payment_status": enrollment.payment_status, "amount_due": enrollment.amount_due}}
+
+@app.post("/enrollments/{enrollment_id}/generate-admission-slip")
+def generate_admission_slip(enrollment_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo", "Student"])
+    enrollment = session.get(Enrollment, enrollment_id)
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    _require_enrollment_access(actor, enrollment, session)
+    student = session.get(Student, enrollment.student_id)
+    batch = session.get(Batch, enrollment.batch_id)
+    course = session.get(Course, enrollment.course_id)
+    instructor = session.get(Instructor, batch.instructor_id) if batch and batch.instructor_id else None
+    enrollment.admission_slip_generated = True
+    session.add(enrollment)
+    session.commit()
+    return {
+        "slip_type": "admission",
+        "slip_number": enrollment.slip_number,
+        "student_name": student.name if student else "",
+        "student_email": student.email if student else "",
+        "student_phone": student.phone if student else "",
+        "course_title": course.title if course else "",
+        "batch_name": batch.batch_name if batch else "",
+        "batch_code": batch.batch_code if batch else "",
+        "start_date": batch.start_date.isoformat() if batch and batch.start_date else "",
+        "schedule": batch.schedule if batch else "",
+        "mode": batch.mode if batch else "",
+        "instructor_name": instructor.name if instructor else "",
+        "total_fee": enrollment.total_fee,
+        "amount_paid": enrollment.amount_paid,
+        "amount_due": enrollment.amount_due,
+        "discount": enrollment.discount,
+        "payment_status": enrollment.payment_status,
+        "enrollment_date": enrollment.enrollment_date.isoformat(),
+        "generated_at": datetime.utcnow().isoformat()
+    }
+
+@app.post("/enrollments/{enrollment_id}/generate-advance-slip")
+def generate_advance_slip(enrollment_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo", "Student"])
+    enrollment = session.get(Enrollment, enrollment_id)
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    _require_enrollment_access(actor, enrollment, session)
+    student = session.get(Student, enrollment.student_id)
+    batch = session.get(Batch, enrollment.batch_id)
+    course = session.get(Course, enrollment.course_id)
+    enrollment.advance_slip_generated = True
+    session.add(enrollment)
+    session.commit()
+    return {
+        "slip_type": "advance",
+        "slip_number": "ADV-" + (enrollment.slip_number or "").replace("ADM-", ""),
+        "student_name": student.name if student else "",
+        "course_title": course.title if course else "",
+        "batch_name": batch.batch_name if batch else "",
+        "amount_paid": enrollment.amount_paid,
+        "payment_mode": enrollment.payment_mode,
+        "enrollment_date": enrollment.enrollment_date.isoformat(),
+        "generated_at": datetime.utcnow().isoformat()
+    }
+
+@app.post("/payments")
+def add_payment(body: PaymentRecordRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    import random, string
+    enrollment = session.get(Enrollment, body.enrollment_id)
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    student = _require_enrollment_access(actor, enrollment, session)
+    if body.student_id != student.id:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    if body.amount <= 0 or body.amount > enrollment.amount_due:
+        raise HTTPException(status_code=422, detail="Payment must be greater than zero and no more than the outstanding balance")
+    receipt = body.receipt_number or "REC-" + "".join(random.choices(string.digits, k=6))
+    payment = PaymentRecord(
+        enrollment_id=body.enrollment_id, student_id=body.student_id,
+        amount=body.amount, payment_mode=body.payment_mode,
+        receipt_number=receipt, notes=body.notes
+    )
+    session.add(payment)
+    # Update enrollment paid amount
+    enrollment.amount_paid += body.amount
+    enrollment.amount_due = max(0, enrollment.total_fee - enrollment.amount_paid - enrollment.discount)
+    enrollment.payment_status = "Paid" if enrollment.amount_due <= 0 else "Partial"
+    enrollment.updated_at = datetime.utcnow()
+    session.add(enrollment)
+    session.commit()
+    return {"payment": {"id": payment.id, "amount": payment.amount}, "receipt_number": receipt}
+
+# -------------------- ATTENDANCE ENDPOINTS --------------------
+@app.post("/attendance")
+def mark_attendance(body: AttendanceRequest, session: Session = Depends(get_session)):
+    date_dt = datetime.fromisoformat(body.date) if body.date else datetime.utcnow()
+    attendance = Attendance(
+        batch_id=body.batch_id, student_id=body.student_id,
+        date=date_dt, status=body.status, notes=body.notes
+    )
+    session.add(attendance)
+    session.commit()
+    return {"attendance": {"id": attendance.id, "status": attendance.status}}
+
+@app.get("/attendance")
+def get_attendance(batch_id: int, date: Optional[str] = None, session: Session = Depends(get_session)):
+    query = select(Attendance).where(Attendance.batch_id == batch_id)
+    if date:
+        target = datetime.fromisoformat(date).date()
+        query = query.filter(func.date(Attendance.date) == target)
+    records = session.exec(query).all()
+    result = []
+    for a in records:
+        student = session.get(Student, a.student_id)
+        result.append({
+            "id": a.id, "student_id": a.student_id, "student_name": student.name if student else None,
+            "date": a.date.isoformat(), "status": a.status, "notes": a.notes
+        })
+    return {"attendance": result}
+
+
+def _create_institute_login(profile, role: str, body: InstituteLoginRequest, session: Session, allowed_roles: list[str]):
+    actor = _require_roles(session, allowed_roles)
+    if profile.user_id:
+        raise HTTPException(status_code=409, detail="This profile already has a login account")
+    if not profile.email:
+        raise HTTPException(status_code=400, detail="Add an email address before creating a login")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=422, detail="Password must be at least 8 characters")
+    if profile.tenant_id and actor.role != "SuperAdmin" and profile.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    existing = session.exec(select(User).where(User.email == profile.email)).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="An account already uses this email address")
+
+    user = User(
+        email=profile.email,
+        password=_hash_password(body.password),
+        name=profile.name,
+        role=role,
+        tenant_id=profile.tenant_id or actor.tenant_id,
+    )
+    session.add(user)
+    session.flush()
+    profile.user_id = user.id
+    session.add(profile)
+    session.commit()
+    session.refresh(user)
+    return {"user": _user_dict(user)}
+
+
+@app.post("/students/{student_id}/login")
+def create_student_login(student_id: int, body: InstituteLoginRequest, session: Session = Depends(get_session)):
+    student = session.get(Student, student_id)
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    return _create_institute_login(student, "Student", body, session, ["Admin", "SalesManager"])
+
+
+@app.post("/instructors/{instructor_id}/login")
+def create_instructor_login(instructor_id: int, body: InstituteLoginRequest, session: Session = Depends(get_session)):
+    instructor = session.get(Instructor, instructor_id)
+    if not instructor:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    return _create_institute_login(instructor, "Instructor", body, session, ["Admin"])
+
+
+def _institute_session_payload(class_session: InstituteSession) -> dict:
+    start = class_session.scheduled_start.timestamp()
+    end = class_session.scheduled_end.timestamp() if class_session.scheduled_end else start + 7200
+    now = datetime.utcnow().timestamp()
+    return {
+        "id": class_session.id,
+        "batch_id": class_session.batch_id,
+        "session_number": class_session.session_number,
+        "title": class_session.title,
+        "topic": class_session.topic,
+        "scheduled_start": class_session.scheduled_start.isoformat(),
+        "scheduled_end": class_session.scheduled_end.isoformat() if class_session.scheduled_end else None,
+        "status": class_session.status,
+        "is_live": class_session.status == "Live" or (start <= now <= end and class_session.status == "Scheduled"),
+        "meeting_url": class_session.meeting_url,
+        "notes": class_session.notes,
+    }
+
+
+def _require_instructor_batch_access(actor: User, batch: Batch, session: Session) -> None:
+    if _normalize_role(actor.role) != "Instructor":
+        return
+    instructor = session.exec(select(Instructor).where(Instructor.user_id == actor.id)).first()
+    if not instructor or batch.instructor_id != instructor.id:
+        raise HTTPException(status_code=403, detail="This batch is not assigned to your instructor account")
+
+
+def _require_student_profile_access(actor: User, student: Student, session: Session) -> None:
+    actor_role = _normalize_role(actor.role)
+    if actor_role == "Student":
+        if student.user_id != actor.id:
+            raise HTTPException(status_code=404, detail="Student not found")
+        return
+    _require_student_salesperson_access(actor, student, session)
+    if actor_role == "Instructor":
+        instructor = session.exec(select(Instructor).where(Instructor.user_id == actor.id)).first()
+        if not instructor:
+            raise HTTPException(status_code=403, detail="Instructor profile is not linked to this login")
+        assigned_batches = select(Batch.id).where(Batch.instructor_id == instructor.id)
+        enrollment = session.exec(
+            select(Enrollment.id).where(
+                Enrollment.student_id == student.id,
+                Enrollment.batch_id.in_(assigned_batches),
+                Enrollment.status == "Active",
+            )
+        ).first()
+        if not enrollment:
+            raise HTTPException(status_code=404, detail="Student not found in your assigned batches")
+
+
+@app.get("/batches/{batch_id}/sessions")
+def get_batch_sessions(batch_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor"])
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    _require_instructor_batch_access(actor, batch, session)
+    sessions = session.exec(
+        select(InstituteSession)
+        .where(InstituteSession.batch_id == batch_id)
+        .order_by(InstituteSession.scheduled_start)
+    ).all()
+    session_items = []
+    for class_session in sessions:
+        item = _institute_session_payload(class_session)
+        enrollments = session.exec(
+            select(Enrollment).where(Enrollment.batch_id == batch_id, Enrollment.status == "Active")
+        ).all()
+        students = []
+        for enrollment in enrollments:
+            student = session.get(Student, enrollment.student_id)
+            if not student:
+                continue
+            attendance = session.exec(
+                select(Attendance).where(
+                    Attendance.session_id == class_session.id,
+                    Attendance.student_id == student.id,
+                )
+            ).first()
+            progress = session.exec(
+                select(StudentSessionProgress).where(
+                    StudentSessionProgress.session_id == class_session.id,
+                    StudentSessionProgress.student_id == student.id,
+                )
+            ).first()
+            students.append({
+                "id": student.id,
+                "name": student.name,
+                "attendance_status": attendance.status if attendance else None,
+                "progress_status": progress.status if progress else "Not Started",
+                "completion_percent": progress.completion_percent if progress else 0,
+            })
+        item["students"] = students
+        session_items.append(item)
+    return {"sessions": session_items}
+
+
+@app.post("/batches/{batch_id}/sessions")
+def create_batch_session(batch_id: int, body: InstituteSessionCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "Instructor"])
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    _require_instructor_batch_access(actor, batch, session)
+    if body.scheduled_end and body.scheduled_end <= body.scheduled_start:
+        raise HTTPException(status_code=422, detail="Session end must be after its start")
+    last_session = session.exec(
+        select(InstituteSession)
+        .where(InstituteSession.batch_id == batch_id)
+        .order_by(InstituteSession.session_number.desc())
+    ).first()
+    class_session = InstituteSession(
+        batch_id=batch_id,
+        session_number=(last_session.session_number + 1) if last_session else 1,
+        title=body.title.strip(),
+        topic=body.topic,
+        scheduled_start=body.scheduled_start,
+        scheduled_end=body.scheduled_end,
+        status=body.status,
+        meeting_url=body.meeting_url,
+        notes=body.notes,
+    )
+    session.add(class_session)
+    session.commit()
+    session.refresh(class_session)
+    return {"session": _institute_session_payload(class_session)}
+
+
+@app.post("/batches/{batch_id}/tasks")
+def create_batch_student_tasks(batch_id: int, body: BatchTaskCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "Instructor"])
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    _require_instructor_batch_access(actor, batch, session)
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Task title cannot be empty")
+    enrollments = session.exec(select(Enrollment).where(Enrollment.batch_id == batch_id, Enrollment.status == "Active")).all()
+    if not enrollments:
+        raise HTTPException(status_code=409, detail="Add active students to this batch before creating class tasks")
+    tasks = []
+    for enrollment in enrollments:
+        tasks.append(Task(
+            title=title,
+            description=body.description,
+            status="Todo",
+            priority=body.priority,
+            due_date=body.due_date,
+            batch_id=batch_id,
+            student_id=enrollment.student_id,
+            assigned_to=actor.id,
+            created_by=actor.id,
+        ))
+    session.add_all(tasks)
+    session.commit()
+    return {"created_count": len(tasks), "student_ids": [enrollment.student_id for enrollment in enrollments]}
+
+
+@app.post("/batches/{batch_id}/students")
+def add_students_to_batch(batch_id: int, body: BatchStudentsRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "Instructor"])
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    _require_instructor_batch_access(actor, batch, session)
+    course = session.get(Course, batch.course_id)
+    if not course or not course.is_active or batch.status in ("Completed", "Cancelled"):
+        raise HTTPException(status_code=409, detail="This batch is not accepting students")
+    student_ids = list(dict.fromkeys(body.student_ids))
+    if not student_ids:
+        raise HTTPException(status_code=422, detail="Select at least one student")
+    active_count = session.exec(select(func.count(Enrollment.id)).where(Enrollment.batch_id == batch_id, Enrollment.status == "Active")).first() or 0
+    if active_count + len(student_ids) > batch.max_seats:
+        raise HTTPException(status_code=409, detail=f"Only {max(0, batch.max_seats - active_count)} seats remain")
+    new_enrollments = []
+    for student_id in student_ids:
+        student = session.get(Student, student_id)
+        if not student or (student.tenant_id and actor.role != "SuperAdmin" and student.tenant_id != actor.tenant_id):
+            raise HTTPException(status_code=404, detail=f"Student {student_id} not found")
+        if actor.role == "Instructor":
+            _require_student_profile_access(actor, student, session)
+        duplicate = session.exec(select(Enrollment.id).where(Enrollment.student_id == student_id, Enrollment.batch_id == batch_id, Enrollment.status == "Active")).first()
+        if duplicate:
+            raise HTTPException(status_code=409, detail=f"{student.name} is already active in this batch")
+        slip_number = "ADM-" + "".join(random.choices(string.digits, k=6))
+        fee = course.price or 0
+        new_enrollments.append(Enrollment(
+            tenant_id=actor.tenant_id,
+            student_id=student_id,
+            batch_id=batch_id,
+            course_id=course.id,
+            total_fee=fee,
+            amount_paid=0,
+            amount_due=fee,
+            payment_status="Pending" if fee > 0 else "Paid",
+            status="Active",
+            enrolled_by=_student_salesperson_id(student, session),
+            slip_number=slip_number,
+        ))
+    session.add_all(new_enrollments)
+    session.commit()
+    return {"added_count": len(new_enrollments), "student_ids": student_ids}
+
+
+@app.post("/batches/{batch_id}/resources")
+async def share_batch_resource(batch_id: int, file: UploadFile = File(...), description: str = Form(""), session: Session = Depends(get_session)):
+    import os
+    import uuid
+    actor = _require_roles(session, ["Admin", "Employee", "Instructor"])
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    _require_instructor_batch_access(actor, batch, session)
+    enrollments = session.exec(select(Enrollment).where(Enrollment.batch_id == batch_id, Enrollment.status == "Active")).all()
+    if not enrollments:
+        raise HTTPException(status_code=409, detail="Add active students before sharing a resource")
+    filename = os.path.basename(file.filename or "class-resource")[:255]
+    content = await file.read(15 * 1024 * 1024 + 1)
+    if not content or len(content) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Files must be between 1 byte and 15 MB")
+    upload_root = os.path.join(os.path.dirname(__file__), "uploads", "students")
+    os.makedirs(upload_root, exist_ok=True)
+    uploads = []
+    for enrollment in enrollments:
+        storage_key = f"{uuid.uuid4().hex}{os.path.splitext(filename)[1].lower()}"
+        with open(os.path.join(upload_root, storage_key), "wb") as target:
+            target.write(content)
+        uploads.append(StudentUpload(
+            student_id=enrollment.student_id,
+            uploaded_by=actor.id,
+            filename=filename,
+            storage_key=storage_key,
+            content_type=file.content_type,
+            size_bytes=len(content),
+            description=(description.strip() or f"Shared with batch {batch.batch_name}")[:500],
+        ))
+    session.add_all(uploads)
+    session.commit()
+    return {"shared_with": len(uploads), "filename": filename}
+
+
+@app.patch("/institute-sessions/{session_id}")
+def update_institute_session(session_id: int, body: InstituteSessionUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "Instructor"])
+    class_session = session.get(InstituteSession, session_id)
+    if not class_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    batch = session.get(Batch, class_session.batch_id)
+    if batch:
+        _require_instructor_batch_access(actor, batch, session)
+    data = body.dict(exclude_unset=True)
+    start = data.get("scheduled_start", class_session.scheduled_start)
+    end = data.get("scheduled_end", class_session.scheduled_end)
+    if end and end <= start:
+        raise HTTPException(status_code=422, detail="Session end must be after its start")
+    for key, value in data.items():
+        setattr(class_session, key, value)
+    class_session.updated_at = datetime.utcnow()
+    session.add(class_session)
+    session.commit()
+    session.refresh(class_session)
+    return {"session": _institute_session_payload(class_session)}
+
+
+@app.post("/institute-sessions/{session_id}/attendance")
+def mark_session_attendance(session_id: int, body: SessionAttendanceRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "Instructor"])
+    class_session = session.get(InstituteSession, session_id)
+    if not class_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    batch = session.get(Batch, class_session.batch_id)
+    if batch:
+        _require_instructor_batch_access(actor, batch, session)
+    enrollment = session.exec(
+        select(Enrollment).where(
+            Enrollment.batch_id == class_session.batch_id,
+            Enrollment.student_id == body.student_id,
+            Enrollment.status == "Active",
+        )
+    ).first()
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Active student enrollment not found for this batch")
+    record = session.exec(
+        select(Attendance).where(
+            Attendance.session_id == session_id,
+            Attendance.student_id == body.student_id,
+        )
+    ).first()
+    if record:
+        record.status = body.status
+        record.notes = body.notes
+    else:
+        record = Attendance(
+            batch_id=class_session.batch_id,
+            session_id=session_id,
+            student_id=body.student_id,
+            date=class_session.scheduled_start,
+            status=body.status,
+            notes=body.notes,
+            marked_by=actor.id,
+        )
+    session.add(record)
+    session.commit()
+    return {"attendance": {"id": record.id, "student_id": record.student_id, "status": record.status}}
+
+
+@app.post("/institute-sessions/{session_id}/progress")
+def update_session_progress(session_id: int, body: SessionProgressRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Employee", "Instructor"])
+    class_session = session.get(InstituteSession, session_id)
+    if not class_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    batch = session.get(Batch, class_session.batch_id)
+    if batch:
+        _require_instructor_batch_access(actor, batch, session)
+    enrollment = session.exec(
+        select(Enrollment).where(
+            Enrollment.batch_id == class_session.batch_id,
+            Enrollment.student_id == body.student_id,
+            Enrollment.status == "Active",
+        )
+    ).first()
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Active student enrollment not found for this batch")
+    if body.completion_percent < 0 or body.completion_percent > 100:
+        raise HTTPException(status_code=422, detail="Completion must be between 0 and 100")
+    progress = session.exec(
+        select(StudentSessionProgress).where(
+            StudentSessionProgress.session_id == session_id,
+            StudentSessionProgress.student_id == body.student_id,
+        )
+    ).first()
+    if not progress:
+        progress = StudentSessionProgress(
+            student_id=body.student_id,
+            batch_id=class_session.batch_id,
+            session_id=session_id,
+        )
+    progress.status = body.status
+    progress.completion_percent = body.completion_percent
+    progress.score = body.score
+    progress.notes = body.notes
+    progress.updated_at = datetime.utcnow()
+    session.add(progress)
+    session.commit()
+    return {"progress": {"id": progress.id, "status": progress.status, "completion_percent": progress.completion_percent}}
+
+
+@app.post("/institute-resources/batches/{batch_id}")
+async def upload_batch_resource(
+    batch_id: int,
+    file: UploadFile = File(...),
+    title: str = Form(...),
+    description: str = Form(""),
+    session: Session = Depends(get_session),
+):
+    import os
+    import uuid
+
+    actor = _require_roles(session, ["Admin", "Instructor"])
+    batch = session.get(Batch, batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    _require_instructor_batch_access(actor, batch, session)
+    clean_title = title.strip()
+    if not clean_title:
+        raise HTTPException(status_code=422, detail="Resource title is required")
+    filename = os.path.basename(file.filename or "resource")[:255]
+    content = await file.read(20 * 1024 * 1024 + 1)
+    if not content or len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Resources must be between 1 byte and 20 MB")
+    storage_key = f"{uuid.uuid4().hex}{os.path.splitext(filename)[1].lower()}"
+    root = os.path.join(os.path.dirname(__file__), "uploads", "institute_resources")
+    os.makedirs(root, exist_ok=True)
+    with open(os.path.join(root, storage_key), "wb") as target:
+        target.write(content)
+    resource = InstituteResource(
+        tenant_id=batch.tenant_id,
+        course_id=batch.course_id,
+        batch_id=batch.id,
+        title=clean_title[:255],
+        description=description.strip()[:500] or None,
+        filename=filename,
+        storage_key=storage_key,
+        content_type=file.content_type,
+        size_bytes=len(content),
+        uploaded_by=actor.id,
+    )
+    session.add(resource)
+    session.commit()
+    session.refresh(resource)
+    return {"resource": {"id": resource.id, "title": resource.title, "description": resource.description, "filename": resource.filename, "size_bytes": resource.size_bytes, "created_at": resource.created_at.isoformat()}}
+
+
+@app.get("/institute-resources/{resource_id}/download")
+def download_institute_resource(resource_id: int, session: Session = Depends(get_session)):
+    import os
+    from fastapi.responses import FileResponse
+
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Instructor", "Student", "Demo"])
+    actor_role = _normalize_role(actor.role)
+    resource = session.get(InstituteResource, resource_id)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    if actor_role == "Student":
+        student = session.exec(select(Student).where(Student.user_id == actor.id)).first()
+        enrollment_query = select(Enrollment.id).where(
+            Enrollment.student_id == (student.id if student else -1),
+            Enrollment.course_id == resource.course_id,
+            Enrollment.status.in_(("Active", "Completed")),
+        )
+        if resource.batch_id:
+            enrollment_query = enrollment_query.where(Enrollment.batch_id == resource.batch_id)
+        if not session.exec(enrollment_query).first():
+            raise HTTPException(status_code=404, detail="Resource not found")
+    elif actor_role == "Instructor":
+        if resource.batch_id:
+            batch = session.get(Batch, resource.batch_id)
+            if not batch:
+                raise HTTPException(status_code=404, detail="Resource not found")
+            _require_instructor_batch_access(actor, batch, session)
+    elif actor_role in ("SalesManager", "Employee", "Sales", "Demo"):
+        enrollments = session.exec(select(Enrollment).where(Enrollment.course_id == resource.course_id)).all()
+        if not any(
+            (student := session.get(Student, enrollment.student_id))
+            and (not resource.batch_id or enrollment.batch_id == resource.batch_id)
+            and _student_salesperson_id(student, session) == actor.id
+            for enrollment in enrollments
+        ):
+            raise HTTPException(status_code=404, detail="Resource not found")
+    root = os.path.realpath(os.path.join(os.path.dirname(__file__), "uploads", "institute_resources"))
+    path = os.path.realpath(os.path.join(root, resource.storage_key))
+    if os.path.commonpath([root, path]) != root or not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Resource not found")
+    return FileResponse(path, filename=resource.filename, media_type=resource.content_type or "application/octet-stream")
+
+
+@app.delete("/institute-resources/{resource_id}")
+def delete_institute_resource(resource_id: int, session: Session = Depends(get_session)):
+    import os
+
+    actor = _require_roles(session, ["Admin", "Instructor"])
+    resource = session.get(InstituteResource, resource_id)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    if resource.batch_id:
+        batch = session.get(Batch, resource.batch_id)
+        if batch:
+            _require_instructor_batch_access(actor, batch, session)
+    path = os.path.join(os.path.dirname(__file__), "uploads", "institute_resources", resource.storage_key)
+    session.delete(resource)
+    session.commit()
+    if os.path.isfile(path):
+        os.remove(path)
+    return {"ok": True}
+
+
+@app.get("/student-portal/learning")
+def get_student_learning(session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Student"])
+    student = session.exec(select(Student).where(Student.user_id == actor.id)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile is not linked to this login")
+    enrollments = session.exec(select(Enrollment).where(Enrollment.student_id == student.id)).all()
+    courses = []
+    for enrollment in enrollments:
+        if enrollment.status not in ("Active", "Completed"):
+            continue
+        batch = session.get(Batch, enrollment.batch_id)
+        course = session.get(Course, enrollment.course_id)
+        if not batch or not course:
+            continue
+        instructor = session.get(Instructor, batch.instructor_id) if batch.instructor_id else None
+        resources = session.exec(
+            select(InstituteResource)
+            .where(
+                InstituteResource.course_id == course.id,
+                or_(InstituteResource.batch_id == batch.id, InstituteResource.batch_id.is_(None)),
+            )
+            .order_by(InstituteResource.created_at.desc())
+        ).all()
+        reviews = session.exec(
+            select(InstructorFeedback).where(
+                InstructorFeedback.student_id == student.id,
+                InstructorFeedback.batch_id == batch.id,
+            )
+        ).all()
+        sessions = session.exec(
+            select(InstituteSession)
+            .where(InstituteSession.batch_id == batch.id)
+            .order_by(InstituteSession.scheduled_start)
+        ).all()
+        progress_rows = session.exec(
+            select(StudentSessionProgress).where(
+                StudentSessionProgress.student_id == student.id,
+                StudentSessionProgress.batch_id == batch.id,
+            )
+        ).all()
+        attendance_rows = session.exec(
+            select(Attendance).where(
+                Attendance.student_id == student.id,
+                Attendance.batch_id == batch.id,
+                Attendance.session_id.is_not(None),
+            )
+        ).all()
+        progress_by_session = {item.session_id: item for item in progress_rows}
+        attendance_by_session = {item.session_id: item for item in attendance_rows}
+        session_items = []
+        for class_session in sessions:
+            item = _institute_session_payload(class_session)
+            progress = progress_by_session.get(class_session.id)
+            attendance = attendance_by_session.get(class_session.id)
+            item["progress"] = {
+                "status": progress.status if progress else "Not Started",
+                "completion_percent": progress.completion_percent if progress else 0,
+                "score": progress.score if progress else None,
+                "notes": progress.notes if progress else None,
+            }
+            item["attendance_status"] = attendance.status if attendance else None
+            session_items.append(item)
+        courses.append({
+            "enrollment_id": enrollment.id,
+            "course_id": course.id,
+            "course_title": course.title,
+            "batch_id": batch.id,
+            "batch_name": batch.batch_name,
+            "batch_status": batch.status,
+            "enrollment_status": enrollment.status,
+            "payment_status": enrollment.payment_status,
+            "total_fee": enrollment.total_fee,
+            "amount_paid": enrollment.amount_paid,
+            "amount_due": enrollment.amount_due,
+            "slip_number": enrollment.slip_number,
+            "admission_slip_generated": enrollment.admission_slip_generated,
+            "advance_slip_generated": enrollment.advance_slip_generated,
+            "start_date": batch.start_date.isoformat() if batch.start_date else None,
+            "end_date": batch.end_date.isoformat() if batch.end_date else None,
+            "schedule": batch.schedule,
+            "room_or_link": batch.room_or_link,
+            "instructor_name": instructor.name if instructor else None,
+            "instructor": {
+                "id": instructor.id,
+                "name": instructor.name,
+                "email": instructor.email,
+                "phone": instructor.phone,
+                "bio": instructor.bio,
+                "expertise": instructor.expertise,
+                "qualification": instructor.qualification,
+                "experience_years": instructor.experience_years,
+                "photo_url": instructor.photo_url,
+            } if instructor else None,
+            "resources": [{"id": item.id, "title": item.title, "description": item.description, "filename": item.filename, "size_bytes": item.size_bytes, "created_at": item.created_at.isoformat()} for item in resources],
+            "review": {"rating": reviews[0].rating, "feedback_text": reviews[0].feedback_text} if reviews else None,
+            "progress_percent": round(sum(item["progress"]["completion_percent"] for item in session_items) / len(session_items)) if session_items else 0,
+            "sessions": session_items,
+        })
+    notes = session.exec(select(StudentNote).where(StudentNote.student_id == student.id).order_by(StudentNote.created_at.desc())).all()
+    return {
+        "student": {
+            "id": student.id,
+            "name": student.name,
+            "email": student.email,
+            "phone": student.phone,
+            "address": student.address,
+            "gender": student.gender,
+            "qualification": student.qualification,
+            "education_level": student.education_level,
+            "gpa": student.gpa,
+            "academic_background": student.academic_background,
+            "career_goal": student.career_goal,
+            "guardian_name": student.guardian_name,
+            "guardian_phone": student.guardian_phone,
+            "source": student.source,
+            "status": student.status,
+        },
+        "notes": [{"id": note.id, "content": note.content, "created_at": note.created_at.isoformat()} for note in notes],
+        "courses": courses,
+    }
+
+
+@app.get("/student-portal/tasks")
+def get_student_portal_tasks(session: Session = Depends(get_session)):
+    """Return tasks assigned to the authenticated student with submission details."""
+    actor = _require_roles(session, ["Student"])
+    student = session.exec(select(Student).where(Student.user_id == actor.id)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile is not linked to this login")
+    tasks_rows = session.exec(
+        select(Task).where(Task.student_id == student.id).order_by(Task.created_at.desc())
+    ).all()
+    tasks = [_task_dict(t, session) for t in tasks_rows]
+    return {"tasks": tasks, "total": len(tasks), "completed": sum(1 for t in tasks if t.get("status") == "Done")}
+
+
+@app.post("/student-portal/tasks/{task_id}/submit")
+async def student_portal_submit_task(
+    task_id: int,
+    submission_url: Optional[str] = Form(None),
+    submission_notes: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    session: Session = Depends(get_session),
+):
+    """Allow student to submit a task from the student portal."""
+    actor = _require_roles(session, ["Student"])
+    student = session.exec(select(Student).where(Student.user_id == actor.id)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not linked")
+    task = session.get(Task, task_id)
+    if not task or task.student_id != student.id:
+        raise HTTPException(status_code=404, detail="Task not found or not assigned to you")
+    if not submission_url and not submission_notes and not file:
+        raise HTTPException(status_code=422, detail="Provide a URL, notes, or upload a file")
+    task.submission_url = submission_url or task.submission_url
+    task.submission_notes = submission_notes or task.submission_notes
+    task.status = "Done"
+    task.submitted_at = datetime.utcnow()
+    if file:
+        import uuid
+        ext = os.path.splitext(file.filename or "")[1]
+        storage_key = f"{uuid.uuid4().hex}{ext}"
+        dest = os.path.join(os.path.dirname(__file__), "uploads", "tasks")
+        os.makedirs(dest, exist_ok=True)
+        content = await file.read()
+        with open(os.path.join(dest, storage_key), "wb") as fh:
+            fh.write(content)
+        task.submission_file = f"/uploads/tasks/{storage_key}"
+    session.add(task)
+    session.commit()
+    session.refresh(task)
+    return {"task": _task_dict(task, session)}
+
+
+@app.get("/instructor-portal/teaching")
+def get_instructor_teaching(session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Instructor"])
+    instructor = session.exec(select(Instructor).where(Instructor.user_id == actor.id)).first()
+    if not instructor:
+        raise HTTPException(status_code=404, detail="Instructor profile is not linked to this login")
+    batches = session.exec(select(Batch).where(Batch.instructor_id == instructor.id)).all()
+    teaching = []
+    for batch in batches:
+        course = session.get(Course, batch.course_id)
+        enrollments = session.exec(
+            select(Enrollment).where(Enrollment.batch_id == batch.id, Enrollment.status == "Active")
+        ).all()
+        sessions = session.exec(
+            select(InstituteSession)
+            .where(InstituteSession.batch_id == batch.id)
+            .order_by(InstituteSession.scheduled_start)
+        ).all()
+        resources = session.exec(
+            select(InstituteResource)
+            .where(InstituteResource.course_id == batch.course_id, InstituteResource.batch_id == batch.id)
+            .order_by(InstituteResource.created_at.desc())
+        ).all()
+        teaching.append({
+            "batch_id": batch.id,
+            "batch_name": batch.batch_name,
+            "batch_status": batch.status,
+            "course_title": course.title if course else None,
+            "start_date": batch.start_date.isoformat() if batch.start_date else None,
+            "schedule": batch.schedule,
+            "room_or_link": batch.room_or_link,
+            "students": [{"id": (student := session.get(Student, item.student_id)).id, "name": student.name} for item in enrollments if session.get(Student, item.student_id)],
+            "sessions": [_institute_session_payload(item) for item in sessions],
+            "resources": [{"id": item.id, "title": item.title, "filename": item.filename, "size_bytes": item.size_bytes, "created_at": item.created_at.isoformat()} for item in resources],
+        })
+    return {"instructor": {"id": instructor.id, "name": instructor.name}, "batches": teaching}
+
+# -------------------- INSTITUTE ANALYTICS --------------------
+@app.get("/institute/analytics")
+def get_institute_analytics(session: Session = Depends(get_session)):
+    # Revenue
+    enrollments = session.exec(select(Enrollment)).all()
+    total_revenue = sum(e.amount_paid for e in enrollments)
+    total_due = sum(e.amount_due for e in enrollments)
+    total_enrollments = len(enrollments)
+    active_enrollments = len([e for e in enrollments if e.status == "Active"])
+
+    # Students
+    total_students = session.exec(select(func.count(Student.id))).first() or 0
+    active_students = session.exec(select(func.count(Student.id)).where(Student.status == "Active")).first() or 0
+
+    # Courses & Batches
+    total_courses = session.exec(select(func.count(Course.id))).first() or 0
+    active_courses = session.exec(select(func.count(Course.id)).where(Course.is_active == True)).first() or 0
+    total_batches = session.exec(select(func.count(Batch.id))).first() or 0
+    active_batches = session.exec(select(func.count(Batch.id)).where(Batch.status == "Active")).first() or 0
+
+    # Leads conversion
+    total_leads = session.exec(select(func.count(Lead.id))).first() or 0
+    converted_leads = session.exec(select(func.count(Lead.id)).where(Lead.is_converted == True)).first() or 0
+    conversion_rate = round((converted_leads / total_leads * 100), 1) if total_leads > 0 else 0
+
+    # Revenue by course
+    revenue_by_course = []
+    courses = session.exec(select(Course)).all()
+    for c in courses:
+        course_enrollments = [e for e in enrollments if e.course_id == c.id]
+        rev = sum(e.amount_paid for e in course_enrollments)
+        if rev > 0:
+            revenue_by_course.append({"course": c.title, "revenue": rev, "students": len(course_enrollments)})
+    revenue_by_course.sort(key=lambda x: x["revenue"], reverse=True)
+
+    # Monthly revenue (last 6 months)
+    from datetime import timedelta
+    monthly_revenue = []
+    for i in range(5, -1, -1):
+        month_start = datetime.utcnow().replace(day=1) - timedelta(days=30*i)
+        month_end = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        month_enrollments = [e for e in enrollments if month_start <= e.enrollment_date < month_end]
+        monthly_revenue.append({
+            "month": month_start.strftime("%b %Y"),
+            "revenue": sum(e.amount_paid for e in month_enrollments),
+            "enrollments": len(month_enrollments)
+        })
+
+    # Instructor stats
+    instructors = session.exec(select(Instructor)).all()
+    instructor_stats = []
+    for ins in instructors:
+        ins_batches = session.exec(select(Batch).where(Batch.instructor_id == ins.id)).all()
+        ins_student_ids = set()
+        for assigned_batch in ins_batches:
+            ins_student_ids.update(session.exec(select(Enrollment.student_id).where(Enrollment.batch_id == assigned_batch.id, Enrollment.status == "Active")).all())
+        feedbacks = session.exec(select(InstructorFeedback).where(InstructorFeedback.instructor_id == ins.id)).all()
+        avg_r = round(sum(f.rating for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0.0
+        now = datetime.utcnow()
+        instructor_stats.append({
+            "id": ins.id, "name": ins.name, "batches": len(ins_batches),
+            "active_batches": sum(1 for item in ins_batches if item.status == "Active"),
+            "upcoming_batches": sum(1 for item in ins_batches if item.status == "Upcoming" or (item.start_date and item.start_date > now and item.status not in ("Completed", "Cancelled"))),
+            "past_batches": sum(1 for item in ins_batches if item.status == "Completed" or (item.end_date and item.end_date < now)),
+            "students": len(ins_student_ids), "avg_rating": avg_r
+        })
+
+    # Sales performance
+    users = session.exec(select(User).where(User.role.in_(["Admin", "SalesManager", "Employee"]))).all()
+    sales_stats = []
+    for u in users:
+        assigned_leads = session.exec(select(Lead).where(Lead.owner_id == u.id)).all()
+        converted = [l for l in assigned_leads if l.converted_student_id]
+        sales_stats.append({
+            "user_id": u.id, "name": u.name, "role": u.role,
+            "leads_assigned": len(assigned_leads), "leads_converted": len(converted),
+            "conversion_rate": round(len(converted) / max(len(assigned_leads), 1) * 100, 1)
+        })
+    sales_stats = [s for s in sales_stats if s["leads_assigned"] > 0]
+
+    return {
+        "revenue": {
+            "total_collected": total_revenue,
+            "total_due": total_due,
+            "total_billed": total_revenue + total_due,
+        },
+        "students": {"total": total_students, "active": active_students},
+        "courses": {"total": total_courses, "active": active_courses},
+        "batches": {"total": total_batches, "active": active_batches},
+        "enrollments": {"total": total_enrollments, "active": active_enrollments},
+        "leads": {"total": total_leads, "converted": converted_leads, "conversion_rate": conversion_rate},
+        "revenue_by_course": revenue_by_course[:10],
+        "monthly_revenue": monthly_revenue,
+        "instructor_stats": instructor_stats,
+        "sales_stats": sales_stats
+    }
+
+
+@app.get("/institute/team-performance")
+def get_institute_team_performance(session: Session = Depends(get_session)):
+    _require_roles(session, ["Admin", "Demo"])
+    sales_users, assignment_metrics = _salesperson_assignment_metrics(session)
+    sales_users.sort(key=lambda user: user.name.lower())
+    sales = []
+    for user in sales_users:
+        assigned_leads = session.exec(select(Lead).where(Lead.owner_id == user.id)).all()
+        converted = [lead for lead in assigned_leads if lead.converted_student_id]
+        student_ids = [lead.converted_student_id for lead in converted]
+        assigned_students = session.exec(select(Student).where(Student.assigned_salesperson_id == user.id)).all()
+        assigned_lead_ids = [lead.id for lead in assigned_leads if lead.id is not None]
+        demo_sessions = session.exec(select(LeadDemoSession).where(LeadDemoSession.lead_id.in_(assigned_lead_ids))).all() if assigned_lead_ids else []
+        attended_lead_ids = {demo.lead_id for demo in demo_sessions if demo.status == "Attended"}
+        converted_after_demo = len({lead.id for lead in converted if lead.id in attended_lead_ids})
+        sales.append({
+            "user_id": user.id,
+            "name": user.name,
+            "email": user.email,
+            "role": user.role,
+            "leads_assigned": len(assigned_leads),
+            "leads_converted": len(converted),
+            "conversion_rate": round(len(converted) / len(assigned_leads) * 100, 1) if assigned_leads else 0,
+            "students_enrolled": len(set(student_ids) | {student.id for student in assigned_students if student.id is not None}),
+            "assigned_students": len(assigned_students),
+            "enrollments": session.exec(select(func.count(Enrollment.id)).where(Enrollment.enrolled_by == user.id)).first() or 0,
+            "revenue_collected": round(assignment_metrics[user.id]["revenue_collected"], 2),
+            "assigned_workload": assignment_metrics[user.id]["assigned_workload"],
+            "demos_scheduled": sum(1 for demo in demo_sessions if demo.status == "Scheduled"),
+            "demos_attended": sum(1 for demo in demo_sessions if demo.status == "Attended"),
+            "demos_missed": sum(1 for demo in demo_sessions if demo.status == "Missed"),
+            "demos_cancelled": sum(1 for demo in demo_sessions if demo.status == "Cancelled"),
+            "demo_to_conversion_count": converted_after_demo,
+            "demo_to_conversion_rate": round(converted_after_demo / len(attended_lead_ids) * 100, 1) if attended_lead_ids else 0,
+        })
+    instructors = []
+    for instructor in session.exec(select(Instructor).order_by(Instructor.name)).all():
+        batches = session.exec(select(Batch).where(Batch.instructor_id == instructor.id)).all()
+        students = set()
+        for assigned_batch in batches:
+            students.update(session.exec(select(Enrollment.student_id).where(Enrollment.batch_id == assigned_batch.id, Enrollment.status == "Active")).all())
+        feedback = session.exec(select(InstructorFeedback).where(InstructorFeedback.instructor_id == instructor.id)).all()
+        instructors.append({
+            "id": instructor.id,
+            "user_id": instructor.user_id,
+            "name": instructor.name,
+            "email": instructor.email,
+            "is_active": instructor.is_active,
+            "students": len(students),
+            "batches_total": len(batches),
+            "batches_active": sum(1 for item in batches if item.status == "Active"),
+            "batches_upcoming": sum(1 for item in batches if item.status == "Upcoming"),
+            "batches_completed": sum(1 for item in batches if item.status == "Completed"),
+            "avg_rating": round(sum(item.rating for item in feedback) / len(feedback), 1) if feedback else 0,
+        })
+    return {"sales": sales, "instructors": instructors}

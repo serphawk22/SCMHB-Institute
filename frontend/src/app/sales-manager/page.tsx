@@ -1,17 +1,49 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useLanguage } from "@/context/LanguageContext";
-import PageGuide from "@/components/PageGuide";
 import { 
   ArrowRight, Bell, FileText, MessageCircle, UserCheck, 
-  Search, Briefcase, Calendar, Phone, Mail, Globe, Clock, ShieldAlert, FileSignature
+  Search, Briefcase, Mail, Clock, ShieldAlert, FileSignature
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+interface SalesClient {
+  id: number;
+  companyName?: string | null;
+  name?: string | null;
+  projectName?: string | null;
+  websiteUrl?: string | null;
+  status?: string | null;
+  lastActivityDate?: string | null;
+}
+
+interface SalesLead {
+  id: number;
+  company_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  status?: string | null;
+  is_converted?: boolean;
+  course_interest_title?: string | null;
+  created_at?: string | null;
+}
+
+interface SalesStudent {
+  id: number;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  status: string;
+  active_course?: string | null;
+  enrollment_count: number;
+}
 
 function formatClientStatus(status: string) {
   switch (status) {
@@ -32,7 +64,10 @@ function formatClientStatus(status: string) {
 export default function SalesManagerPage() {
   const { role, user } = useRole();
   const { t } = useLanguage();
-  const [clients, setClients] = useState<any[]>([]);
+  const [clients, setClients] = useState<SalesClient[]>([]);
+  const [leads, setLeads] = useState<SalesLead[]>([]);
+  const [students, setStudents] = useState<SalesStudent[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
@@ -51,26 +86,53 @@ export default function SalesManagerPage() {
 
   const canAccess = role === "Admin" || role === "Employee" || role === "SalesManager" || role === "Demo";
 
-  useEffect(() => {
-    if (!user?.id) return;
-    fetchAssignedClients();
-  }, [user?.id]);
-
-  const fetchAssignedClients = async () => {
+  const fetchAssignedClients = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/clients?assigned_employee_id=${user?.id}&per_page=50`);
       const data = await res.json();
       setClients(data.clients || []);
-      if (!selectedClientId && data.clients?.length) {
-        setSelectedClientId(data.clients[0].id);
-      }
+      if (data.clients?.length) setSelectedClientId((current) => current || data.clients[0].id);
     } catch (error) {
       console.error("Unable to load assigned clients:", error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
+
+  const fetchAssignedLeads = useCallback(async () => {
+    setLeadsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/leads?owner_id=${user?.id}`);
+      if (!res.ok) throw new Error("Unable to load assigned leads.");
+      const data = await res.json();
+      setLeads(data.leads || []);
+    } catch (error) {
+      console.error("Unable to load assigned leads:", error);
+      setLeads([]);
+    } finally {
+      setLeadsLoading(false);
+    }
+  }, [user?.id]);
+
+  const fetchAssignedStudents = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/students`);
+      if (!response.ok) throw new Error("Unable to load assigned students.");
+      const data = await response.json();
+      setStudents(data.students || []);
+    } catch (error) {
+      console.error("Unable to load assigned students:", error);
+      setStudents([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    fetchAssignedClients();
+    fetchAssignedLeads();
+    fetchAssignedStudents();
+  }, [user?.id, fetchAssignedClients, fetchAssignedLeads, fetchAssignedStudents]);
 
   const showToast = (message: string) => {
     setToast(message);
@@ -86,6 +148,10 @@ export default function SalesManagerPage() {
       client.websiteUrl?.toLowerCase().includes(term)
     );
   });
+
+  const convertedLeads = leads.filter((lead) => lead.is_converted || ["Enrolled", "Won", "Converted"].includes(lead.status || ""));
+  const openLeads = leads.filter((lead) => !convertedLeads.includes(lead) && lead.status !== "Lost");
+  const demoLeads = openLeads.filter((lead) => lead.status === "Demo Scheduled");
 
   const handleRemarkSubmit = async () => {
     if (!selectedClient || !remarkBody.trim() || !user) return;
@@ -199,7 +265,7 @@ export default function SalesManagerPage() {
               </div>
               <p className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-zinc-400 dark:text-slate-400">{t("sales_manager.active")}</p>
             </div>
-            <p className="text-3xl font-black text-slate-900 dark:text-zinc-50 dark:text-white">{clients.filter((c) => ["Active", "Accepted", "In Progress"].includes(c.status)).length}</p>
+            <p className="text-3xl font-black text-slate-900 dark:text-zinc-50 dark:text-white">{clients.filter((c) => ["Active", "Accepted", "In Progress"].includes(c.status || "")).length}</p>
           </div>
           <div className="rounded-3xl border border-slate-200 dark:border-zinc-700 dark:border-white/10 bg-white dark:bg-zinc-900 dark:bg-white dark:bg-zinc-900/5 p-5 shadow-sm transition-transform hover:-translate-y-1">
             <div className="flex items-center gap-3 mb-3">
@@ -212,6 +278,75 @@ export default function SalesManagerPage() {
           </div>
         </div>
       </div>
+
+      <section className="space-y-4 px-6">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+          <div>
+            <h2 className="text-xl font-black text-slate-900 dark:text-zinc-50">My lead pipeline</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">Move prospects from first contact through demos and enrollment.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/leads" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800">
+              View all leads <ArrowRight size={15} />
+            </Link>
+            <Link href="/leads?action=add" className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700">
+              Add lead
+            </Link>
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            { label: "Assigned leads", value: leads.length, accent: "text-slate-900 dark:text-white" },
+            { label: "Open opportunities", value: openLeads.length, accent: "text-amber-700 dark:text-amber-300" },
+            { label: "Demos scheduled", value: demoLeads.length, accent: "text-sky-700 dark:text-sky-300" },
+            { label: "Enrolled", value: convertedLeads.length, accent: "text-emerald-700 dark:text-emerald-300" },
+          ].map((metric) => (
+            <div key={metric.label} className="rounded-2xl border border-slate-200 bg-white px-5 py-4 dark:border-zinc-700 dark:bg-zinc-900">
+              <p className="text-xs font-bold uppercase text-slate-500 dark:text-zinc-400">{metric.label}</p>
+              <p className={`mt-2 text-2xl font-black ${metric.accent}`}>{leadsLoading ? "—" : metric.value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-zinc-700">
+            <div>
+              <h3 className="font-bold text-slate-900 dark:text-zinc-50">Recent prospects</h3>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">Your latest assigned leads and course interests.</p>
+            </div>
+            <span className="text-xs font-semibold text-slate-500 dark:text-zinc-400">{openLeads.length} active</span>
+          </div>
+          {leadsLoading ? (
+            <p className="px-5 py-8 text-center text-sm text-slate-500 dark:text-zinc-400">Loading your pipeline…</p>
+          ) : openLeads.length === 0 ? (
+            <div className="px-5 py-8 text-center">
+              <p className="text-sm font-semibold text-slate-700 dark:text-zinc-200">No open leads assigned yet</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-zinc-400">New prospects assigned to you will appear here.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100 dark:divide-zinc-800">
+              {openLeads.slice(0, 5).map((lead) => {
+                const leadName = lead.company_name || [lead.first_name, lead.last_name].filter(Boolean).join(" ") || "New lead";
+                return (
+                  <Link key={lead.id} href={`/leads/${lead.id}`} className="flex flex-col gap-2 px-5 py-3 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between dark:hover:bg-zinc-800/60">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-bold text-slate-900 dark:text-zinc-100">{leadName}</p>
+                      <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-zinc-400">{lead.course_interest_title || lead.email || lead.phone || "Course interest not recorded"}</p>
+                    </div>
+                    <span className="inline-flex w-fit shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-zinc-800 dark:text-zinc-200">{lead.status || "New"}</span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="space-y-4 px-6">
+        <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-xl font-black text-slate-900 dark:text-zinc-50">My assigned students</h2><p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">Student profiles, enrollment status, and course handoffs assigned to you.</p></div><Link href="/students" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800">All my students <ArrowRight size={15} /></Link></div>
+        {students.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{students.slice(0, 6).map(student => <Link key={student.id} href={`/students/${student.id}`} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 transition hover:border-emerald-400 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-emerald-700"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-bold text-slate-900 dark:text-zinc-50">{student.name}</p><p className="mt-1 truncate text-xs text-slate-500 dark:text-zinc-400">{student.active_course || student.email || student.phone || "Course not assigned"}</p></div><span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">{student.status}</span></div><p className="mt-3 text-xs text-slate-500 dark:text-zinc-400">{student.enrollment_count} enrollments</p></Link>)}</div> : <div className="rounded-xl border border-dashed border-slate-300 px-5 py-6 text-sm text-slate-500 dark:border-zinc-700 dark:text-zinc-400">No students are assigned to you yet. Students converted from your leads will appear here.</div>}
+      </section>
 
       <div className="px-6 grid gap-6 xl:grid-cols-[400px_1fr]">
         
@@ -268,7 +403,7 @@ export default function SalesManagerPage() {
                           client.status === "Pending" ? "bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400" :
                           "bg-slate-200 dark:bg-zinc-700 text-slate-700 dark:text-zinc-200 dark:bg-slate-800 dark:text-slate-400"
                         )}>
-                          {formatClientStatus(client.status)}
+                          {formatClientStatus(client.status || "")}
                         </span>
                         <h3 className={cn(
                           "text-base font-black truncate", 
@@ -453,6 +588,12 @@ export default function SalesManagerPage() {
               <p className="mt-1 text-sm font-medium text-slate-500 dark:text-zinc-400 dark:text-slate-400">{t("sales_manager.quick_tools_desc")}</p>
             </div>
             <div className="flex flex-wrap gap-3">
+              <Link href="/work-queue" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 transition hover:bg-slate-50 dark:hover:bg-zinc-800">
+                <Clock size={16} /> My work queue
+              </Link>
+              <Link href="/enrollments" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 transition hover:bg-slate-50 dark:hover:bg-zinc-800">
+                <FileText size={16} /> My enrollments & slips
+              </Link>
               <Link href="/email-agent" className="inline-flex items-center gap-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-500/20 dark:hover:bg-indigo-500/30 px-5 py-2.5 text-sm font-bold text-indigo-700 dark:text-indigo-300 transition-colors">
                 <Mail size={16} /> {t("sales_manager.draft_outreach")}
               </Link>

@@ -38,7 +38,10 @@ if DATABASE_URL and DATABASE_URL.startswith("postgresql"):
 engine = create_engine(
     DATABASE_URL,
     echo=False,
-    pool_pre_ping=False,          # disable: was causing 1 extra RTT per request
+    # Neon may close idle connections or briefly drop the network path. Validate a
+    # pooled connection before it is handed to a request so SQLAlchemy reconnects
+    # instead of surfacing a transient OperationalError as a 500 response.
+    pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
     pool_recycle=300,             # recycle connections every 5 min to keep them fresh
@@ -819,9 +822,15 @@ class Task(SQLModel, table=True):
     due_date: Optional[str] = None
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
     lead_id: Optional[int] = Field(default=None, foreign_key="leads.id")
+    student_id: Optional[int] = Field(default=None, foreign_key="students.id", index=True)
+    batch_id: Optional[int] = Field(default=None, foreign_key="batches.id", index=True)
     project_id: Optional[int] = Field(default=None, foreign_key="projects.id")
     assigned_to: Optional[int] = Field(default=None, foreign_key="users.id")
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    submission_url: Optional[str] = Field(default=None, max_length=1000)
+    submission_file: Optional[str] = Field(default=None, max_length=1000)
+    submission_notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    submitted_at: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     comments: List["TaskComment"] = Relationship(back_populates="task")
@@ -855,6 +864,8 @@ class TaskSheetEntry(SQLModel, table=True):
     blocker: Optional[str] = Field(default=None, sa_column=Column(Text))
     follow_up_date: Optional[str] = Field(default=None, index=True)
     completion_date: Optional[str] = Field(default=None, index=True)
+    proof_of_work: Optional[str] = Field(default=None, sa_column=Column(Text))
+    expected_date: Optional[str] = Field(default=None, max_length=50)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -1100,6 +1111,13 @@ class Lead(SQLModel, table=True):
     company_name: str = Field(max_length=255, index=True)
     website: Optional[str] = Field(default=None, max_length=500)
     industry: Optional[str] = Field(default=None, max_length=200)
+    course_interest_id: Optional[int] = Field(default=None, foreign_key="courses.id", index=True)
+    gpa: Optional[float] = Field(default=None)
+    education_level: Optional[str] = Field(default=None, max_length=120)
+    academic_background: Optional[str] = Field(default=None, sa_column=Column(Text))
+    background_details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    career_goal: Optional[str] = Field(default=None, sa_column=Column(Text))
+    course_plan: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     email: Optional[str] = Field(default=None, max_length=255)
     phone: Optional[str] = Field(default=None, max_length=100)
     address: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -1109,6 +1127,7 @@ class Lead(SQLModel, table=True):
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
     is_converted: bool = Field(default=False)
     converted_client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
+    converted_student_id: Optional[int] = Field(default=None, index=True)
     account_id: Optional[int] = Field(default=None, foreign_key="accounts.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     last_activity: Optional[str] = Field(default=None, max_length=500)
@@ -1117,6 +1136,20 @@ class Lead(SQLModel, table=True):
 
     account: Optional[Account] = Relationship(back_populates="leads")
     contacts: List["Contact"] = Relationship(back_populates="lead")
+
+
+class LeadDemoSession(SQLModel, table=True):
+    __tablename__ = "lead_demo_sessions"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    lead_id: int = Field(foreign_key="leads.id", index=True)
+    scheduled_at: datetime = Field(index=True)
+    status: str = Field(default="Scheduled", max_length=30, index=True)
+    meeting_url: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 class LeadNote(SQLModel, table=True):
     """Note attached to an individual lead, with author and timestamp"""
@@ -1366,13 +1399,37 @@ class ExtractedEmail(SQLModel, table=True):
 
 def create_db_and_tables():
     """
-    Create all database tables (drops existing tables first to ensure schema matches)
+    Create all database tables only when the app is starting against an empty schema.
+    On a running database, skipping a full create_all avoids startup stalls on large
+    PostgreSQL environments while preserving first-run bootstrapping.
     """
-    # Create all tables if they don't exist
-    SQLModel.metadata.create_all(engine)
-    
-    # Run migrations (SQLite safe)
     from sqlalchemy import text
+
+    try:
+        with engine.connect() as conn:
+            dialect = engine.dialect.name
+            if dialect == "postgresql":
+                table_count = conn.execute(
+                    text("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'")
+                ).scalar() or 0
+                if int(table_count) > 0:
+                    print("Existing PostgreSQL schema detected; skipping create_all() startup bootstrap.")
+                    return
+            elif dialect == "sqlite":
+                table_count = conn.execute(
+                    text("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+                ).scalar() or 0
+                if int(table_count) > 0:
+                    print("Existing SQLite schema detected; skipping create_all() startup bootstrap.")
+                    return
+    except Exception:
+        # Fall through to a normal create_all() if we cannot inspect the schema.
+        pass
+
+    # Create all tables if they don't exist.
+    SQLModel.metadata.create_all(engine)
+
+    # Run migrations (SQLite safe)
     
     # List of migration queries (removed IF NOT EXISTS for SQLite compatibility)
     migrations = [
@@ -1750,3 +1807,258 @@ class APIUsageLog(SQLModel, table=True):
     user_agent: Optional[str] = Field(default=None, max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
+
+# ============================================================
+# TRAINING INSTITUTE MODELS
+# ============================================================
+
+class Course(SQLModel, table=True):
+    """Course catalog entry for the training institute."""
+    __tablename__ = "courses"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    title: str = Field(max_length=255)
+    slug: Optional[str] = Field(default=None, max_length=255, index=True)
+    description: Optional[str] = Field(default=None, sa_column=Column(Text))
+    category: Optional[str] = Field(default=None, max_length=100)
+    duration_weeks: Optional[int] = Field(default=None)
+    duration_hours: Optional[int] = Field(default=None)
+    price: float = Field(default=0.0)
+    advance_amount: float = Field(default=0.0)
+    thumbnail_url: Optional[str] = Field(default=None, max_length=500)
+    syllabus: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    prerequisites: Optional[str] = Field(default=None, sa_column=Column(Text))
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Instructor(SQLModel, table=True):
+    """Instructor profile linked to a User account."""
+    __tablename__ = "instructors"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    name: str = Field(max_length=255)
+    email: Optional[str] = Field(default=None, max_length=255)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    bio: Optional[str] = Field(default=None, sa_column=Column(Text))
+    expertise: Optional[str] = Field(default=None, max_length=500)
+    qualification: Optional[str] = Field(default=None, max_length=255)
+    experience_years: Optional[int] = Field(default=None)
+    photo_url: Optional[str] = Field(default=None, max_length=500)
+    is_active: bool = Field(default=True)
+    avg_rating: float = Field(default=0.0)
+    total_students: int = Field(default=0)
+    total_batches: int = Field(default=0)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Batch(SQLModel, table=True):
+    """A batch/class run of a course."""
+    __tablename__ = "batches"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    instructor_id: Optional[int] = Field(default=None, foreign_key="instructors.id", index=True)
+    batch_name: str = Field(max_length=255)
+    batch_code: Optional[str] = Field(default=None, max_length=50)
+    start_date: Optional[datetime] = Field(default=None)
+    end_date: Optional[datetime] = Field(default=None)
+    schedule: Optional[str] = Field(default=None, max_length=500)  # e.g. "Mon-Wed-Fri 10am-12pm"
+    session_duration_hours: int = Field(default=1)
+    assignment_strategy: str = Field(default="manual", max_length=30)
+    mode: str = Field(default="Offline", max_length=50)  # Online, Offline, Hybrid
+    max_seats: int = Field(default=30)
+    enrolled_count: int = Field(default=0)
+    status: str = Field(default="Upcoming", max_length=50)  # Upcoming, Active, Completed, Cancelled
+    room_or_link: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Student(SQLModel, table=True):
+    """A student / prospective student at the institute."""
+    __tablename__ = "students"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    user_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    name: str = Field(max_length=255)
+    email: Optional[str] = Field(default=None, max_length=255, index=True)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    course_interest: Optional[str] = Field(default=None, max_length=200)
+    course_interest_id: Optional[int] = Field(default=None, foreign_key="courses.id", index=True)
+    gpa: Optional[float] = Field(default=None)
+    education_level: Optional[str] = Field(default=None, max_length=120)
+    academic_background: Optional[str] = Field(default=None, sa_column=Column(Text))
+    background_details: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    career_goal: Optional[str] = Field(default=None, sa_column=Column(Text))
+    course_plan: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    address: Optional[str] = Field(default=None, max_length=500)
+    date_of_birth: Optional[datetime] = Field(default=None)
+    gender: Optional[str] = Field(default=None, max_length=20)
+    qualification: Optional[str] = Field(default=None, max_length=255)
+    guardian_name: Optional[str] = Field(default=None, max_length=255)
+    guardian_phone: Optional[str] = Field(default=None, max_length=50)
+    source: Optional[str] = Field(default=None, max_length=100)  # walk-in, referral, online, lead
+    lead_id: Optional[int] = Field(default=None, foreign_key="leads.id", index=True)
+    assigned_salesperson_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    status: str = Field(default="Active", max_length=50)  # Active, Inactive, Dropped, Completed
+    drop_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
+    improvement_plan: Optional[str] = Field(default=None, sa_column=Column(Text))
+    dropped_at: Optional[datetime] = Field(default=None)
+    dropped_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    photo_url: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Enrollment(SQLModel, table=True):
+    """Enrollment record linking a student to a batch."""
+    __tablename__ = "enrollments"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    student_id: int = Field(foreign_key="students.id", index=True)
+    batch_id: int = Field(foreign_key="batches.id", index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    enrollment_date: datetime = Field(default_factory=datetime.utcnow)
+    total_fee: float = Field(default=0.0)
+    amount_paid: float = Field(default=0.0)
+    amount_due: float = Field(default=0.0)
+    payment_mode: Optional[str] = Field(default=None, max_length=50)  # Cash, UPI, Card, Bank Transfer
+    payment_status: str = Field(default="Pending", max_length=50)  # Pending, Partial, Paid
+    status: str = Field(default="Active", max_length=50)  # Active, Completed, Dropped
+    admission_slip_generated: bool = Field(default=False)
+    advance_slip_generated: bool = Field(default=False)
+    slip_number: Optional[str] = Field(default=None, max_length=100)
+    discount: float = Field(default=0.0)
+    discount_reason: Optional[str] = Field(default=None, max_length=255)
+    enrolled_by: Optional[int] = Field(default=None, foreign_key="users.id")  # salesperson
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PaymentRecord(SQLModel, table=True):
+    """Individual payment transactions for an enrollment."""
+    __tablename__ = "payment_records"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    enrollment_id: int = Field(foreign_key="enrollments.id", index=True)
+    student_id: int = Field(foreign_key="students.id", index=True)
+    amount: float = Field(default=0.0)
+    payment_mode: str = Field(default="Cash", max_length=50)
+    payment_date: datetime = Field(default_factory=datetime.utcnow)
+    receipt_number: Optional[str] = Field(default=None, max_length=100)
+    notes: Optional[str] = Field(default=None, max_length=500)
+    recorded_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class InstructorFeedback(SQLModel, table=True):
+    """Student feedback on an instructor for a batch."""
+    __tablename__ = "instructor_feedback"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    instructor_id: int = Field(foreign_key="instructors.id", index=True)
+    batch_id: int = Field(foreign_key="batches.id", index=True)
+    student_id: Optional[int] = Field(default=None, foreign_key="students.id")
+    rating: int = Field(default=5)  # 1-5
+    teaching_quality: Optional[int] = Field(default=None)
+    punctuality: Optional[int] = Field(default=None)
+    communication: Optional[int] = Field(default=None)
+    feedback_text: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Attendance(SQLModel, table=True):
+    """Daily attendance for students in a batch."""
+    __tablename__ = "attendance"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    batch_id: int = Field(foreign_key="batches.id", index=True)
+    student_id: int = Field(foreign_key="students.id", index=True)
+    session_id: Optional[int] = Field(default=None, foreign_key="institute_sessions.id", index=True)
+    date: datetime = Field(default_factory=datetime.utcnow)
+    status: str = Field(default="Present", max_length=20)  # Present, Absent, Late
+    marked_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    notes: Optional[str] = Field(default=None, max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class InstituteSession(SQLModel, table=True):
+    """A scheduled class session within a course batch."""
+    __tablename__ = "institute_sessions"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    batch_id: int = Field(foreign_key="batches.id", index=True)
+    session_number: int
+    title: str = Field(max_length=255)
+    topic: Optional[str] = Field(default=None, max_length=500)
+    scheduled_start: datetime = Field(index=True)
+    scheduled_end: Optional[datetime] = Field(default=None)
+    status: str = Field(default="Scheduled", max_length=30)
+    meeting_url: Optional[str] = Field(default=None, max_length=500)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StudentSessionProgress(SQLModel, table=True):
+    """A student's completion and assessment state for one class session."""
+    __tablename__ = "student_session_progress"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    student_id: int = Field(foreign_key="students.id", index=True)
+    batch_id: int = Field(foreign_key="batches.id", index=True)
+    session_id: int = Field(foreign_key="institute_sessions.id", index=True)
+    status: str = Field(default="Not Started", max_length=30)
+    completion_percent: int = Field(default=0)
+    score: Optional[float] = Field(default=None)
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StudentNote(SQLModel, table=True):
+    """Staff comments and follow-up notes on a student record."""
+    __tablename__ = "student_notes"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    student_id: int = Field(foreign_key="students.id", index=True)
+    author_id: Optional[int] = Field(default=None, foreign_key="users.id")
+    content: str = Field(sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class StudentUpload(SQLModel, table=True):
+    """Private student file metadata; file contents remain outside the public static directory."""
+    __tablename__ = "student_uploads"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    student_id: int = Field(foreign_key="students.id", index=True)
+    uploaded_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    filename: str = Field(max_length=255)
+    storage_key: str = Field(max_length=255, unique=True)
+    content_type: Optional[str] = Field(default=None, max_length=150)
+    size_bytes: int = Field(default=0)
+    description: Optional[str] = Field(default=None, max_length=500)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class InstituteResource(SQLModel, table=True):
+    """Course or batch resource shared with enrolled students."""
+    __tablename__ = "institute_resources"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    batch_id: Optional[int] = Field(default=None, foreign_key="batches.id", index=True)
+    title: str = Field(max_length=255)
+    description: Optional[str] = Field(default=None, max_length=500)
+    filename: str = Field(max_length=255)
+    storage_key: str = Field(max_length=255, unique=True)
+    content_type: Optional[str] = Field(default=None, max_length=150)
+    size_bytes: int = Field(default=0)
+    uploaded_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -214,7 +214,7 @@ export default function HomePage() {
   useEffect(() => {
     if (authLoading) return;
     if (!isAuthenticated) {
-      router.replace("/showcase");
+      router.replace("/login");
       return;
     }
     if (role === "Employee") {
@@ -239,8 +239,8 @@ function Dashboard() {
   const isAdmin = role === "Admin";
 
   const NAV_CARDS = [
-    { href: "/clients", icon: Users, gradient: "from-indigo-500 to-indigo-600", title: language === 'es' ? "Centro de Clientes" : "Clients Hub", description: language === 'es' ? "La Fundación: Gestione cada perfil de cliente, realice un seguimiento de los protocolos de crecimiento, hitos y mantenga relaciones profesionales en un solo lugar." : "The Foundation: Manage every client profile, track growth protocols, milestones, and maintain professional relationships in one central hub.", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
-    { href: "/sales-manager", icon: UserCheck, gradient: "from-fuchsia-500 to-pink-600", title: language === 'es' ? "Centro de Gerente de Ventas" : "Sales Manager Hub", description: language === 'es' ? "Espacio de trabajo para el propietario de los ingresos en cuentas asignadas, registros de comunicación, traspasos de facturas y escalado administrativo." : "Revenue owner workspace for assigned accounts, communication logs, invoice handoffs, and admin escalation.", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
+    { href: "/leads", icon: GraduationCap, gradient: "from-emerald-600 to-teal-600", title: language === 'es' ? "Admisiones" : "Admissions Hub", description: language === 'es' ? "Gestione prospectos estudiantiles, orientación académica, conversión a estudiantes y seguimiento de inscripciones." : "Manage prospective students, academic fit, student conversion, and enrollment handoff.", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
+    { href: "/sales-manager", icon: UserCheck, gradient: "from-fuchsia-500 to-pink-600", title: language === 'es' ? "Equipo de Ventas" : "Sales Team", description: language === 'es' ? "Seguimiento de prospectos asignados, conversiones a estudiantes, inscripciones y próximos pasos." : "Track assigned student leads, conversions, enrollments, and follow-up actions.", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
     { href: "/admin/sales-team", icon: UserCheck, gradient: "from-teal-500 to-emerald-500", title: language === 'es' ? "Equipo de Ventas" : "Sales Team", description: language === 'es' ? "Espacio de trabajo del administrador para agregar vendedores, gestionar cuentas y crear acceso de inicio de sesión para los Gerentes de Ventas." : "Admin workspace for adding salespeople, managing accounts, and creating Sales Manager login access.", roles: ["Admin"] },
     { href: "/email-agent", icon: Bot, gradient: "from-violet-500 to-purple-600", title: language === 'es' ? "Agente de Email" : "Email Agent", description: language === 'es' ? "Motor de Crecimiento: Alcance automatizado por IA que analiza prospectos y redacta correos personalizados bilingües para escalar sus ingresos." : "Growth Engine: AI-powered outreach that auto-analyzes leads and drafts personalized bilingual emails to scale your revenue automatically.", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
     { href: "/calls", icon: Phone, gradient: "from-amber-500 to-orange-600", title: language === 'es' ? "Centro de Llamadas" : "Call Center", description: language === 'es' ? "Inteligencia de Puntos de Contacto: Registre cada conversación, haga seguimiento y asegúrese de que ningún prospecto quede sin un próximo paso claro." : "Touchpoint Intelligence: Log every conversation, track follow-ups, and ensure no lead is ever left without a clear next step or work assignment.", roles: ["Admin", "Employee", "SalesManager", "Demo"] },

@@ -44,3 +44,9 @@ tmp_check_version.py
 test_*.py
 *.pyc
 .myvenv/
+
+# Local runtime state and ad-hoc QA artifacts
+uploads/
+.tenant_migration_done
+backend.log
+frontend/.qa-*.mjs

@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useEffect, ReactNode } from 'react
 import { useRouter, usePathname } from 'next/navigation';
 import { API_BASE_URL } from '@/config';
 
-export type Role = 'SuperAdmin' | 'Admin' | 'Employee' | 'Client' | 'Intern' | 'SalesManager' | 'Supplier' | 'Demo' | 'ProjectMember';
+export type Role = 'SuperAdmin' | 'Admin' | 'Employee' | 'Client' | 'Intern' | 'SalesManager' | 'Supplier' | 'Demo' | 'ProjectMember' | 'Student' | 'Instructor';
 
 interface User {
   id: number;
@@ -26,6 +26,24 @@ interface RoleContextType {
 
 const RoleContext = createContext<RoleContextType | undefined>(undefined);
 
+function normalizeRole(role: string): Role {
+  const key = role.replace(/[\s_-]+/g, "").toLowerCase();
+  const normalized: Record<string, Role> = {
+    admin: "Admin",
+    superadmin: "SuperAdmin",
+    employee: "Employee",
+    client: "Client",
+    intern: "Intern",
+    salesmanager: "SalesManager",
+    student: "Student",
+    instructor: "Instructor",
+    supplier: "Supplier",
+    demo: "Demo",
+    projectmember: "ProjectMember",
+  };
+  return normalized[key] || role as Role;
+}
+
 function readStoredUser(): User | null {
   if (typeof window === 'undefined') return null;
 
@@ -35,7 +53,7 @@ function readStoredUser(): User | null {
   try {
     const parsedUser = JSON.parse(savedUser);
     if (parsedUser?.id && parsedUser?.email && parsedUser?.role) {
-      return parsedUser;
+      return { ...parsedUser, role: normalizeRole(parsedUser.role) };
     }
   } catch {
     // Clear malformed client state below.
@@ -150,12 +168,24 @@ export function RoleProvider({ children }: { children: ReactNode }) {
           router.replace('/supplier');
         } else if (user?.role === 'SalesManager') {
           router.replace('/clients');
+        } else if (user?.role === 'Student') {
+          router.replace('/learning');
+        } else if (user?.role === 'Instructor') {
+          router.replace('/teaching');
         } else {
           router.replace('/');
         }
+      } else if (isAuthenticated && pathname === '/' && user?.role === 'Student') {
+        router.replace('/learning');
+      } else if (isAuthenticated && pathname === '/' && user?.role === 'Instructor') {
+        router.replace('/teaching');
+      } else if (isAuthenticated && user?.role === 'Student' && pathname !== '/learning' && pathname !== '/profile') {
+        router.replace('/learning');
+      } else if (isAuthenticated && user?.role === 'Instructor' && pathname !== '/teaching' && pathname !== '/profile' && pathname !== '/batches' && !pathname?.startsWith('/batches/')) {
+        router.replace('/teaching');
       }
     }
-  }, [isAuthenticated, pathname, loading, router]);
+  }, [isAuthenticated, pathname, loading, router, user?.role]);
 
   const login = async (email: string, pass: string) => {
     try {
@@ -166,9 +196,10 @@ export function RoleProvider({ children }: { children: ReactNode }) {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setUser(data.user);
+        const normalizedUser = { ...data.user, role: normalizeRole(data.user.role) };
+        setUser(normalizedUser);
         setIsAuthenticated(true);
-        localStorage.setItem('crm_user', JSON.stringify(data.user));
+        localStorage.setItem('crm_user', JSON.stringify(normalizedUser));
         return { success: true };
       }
       if (res.status === 503 && (data.status === 'network_error' || data.ok === false)) {
@@ -186,7 +217,9 @@ export function RoleProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem('crm_user');
-    window.location.replace('/login');
+    setUser(null);
+    setIsAuthenticated(false);
+    router.replace('/login');
   };
 
   return (

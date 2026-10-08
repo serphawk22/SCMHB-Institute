@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star
+  Trophy, Star, GraduationCap, Layers, UserCog
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -41,7 +41,7 @@ const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
-  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog
 };
 
 interface SidebarProps {
@@ -60,19 +60,28 @@ const defaultSidebarSections = [
   },
   {
     id: "section-crm",
-    heading: "CRM",
+    heading: "ADMISSIONS & SALES",
     items: [
-      { id: "item-leads", name: "Leads", icon: "Radar", href: "/leads", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-contacts", name: "Contacts", icon: "Users", href: "/contacts", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-clients", name: "Clients", icon: "CheckCircle", href: "/clients", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-deals", name: "Deals", icon: "Briefcase", href: "/pipeline", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-leads", name: "Student Leads", icon: "GraduationCap", href: "/leads", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
+      { id: "item-deals", name: "Sales Pipeline", icon: "Briefcase", href: "/pipeline", roles: ["Admin", "SalesManager", "Demo"] },
+    ],
+  },
+  {
+    id: "section-institute",
+    heading: "INSTITUTE",
+    items: [
+      { id: "item-courses", name: "Course Catalog", icon: "BookOpen", href: "/courses", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
+      { id: "item-batches", name: "Batches", icon: "Layers", href: "/batches", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
+      { id: "item-students", name: "Students", icon: "GraduationCap", href: "/students", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
+      { id: "item-enrollments", name: "Enrollments & Slips", icon: "FileText", href: "/enrollments", roles: ["Admin", "Demo", "SalesManager"] },
+      { id: "item-instructors", name: "Instructors", icon: "UserCog", href: "/instructors", roles: ["Admin", "Demo"] },
+      { id: "item-institute-analytics", name: "Institute Analytics", icon: "BarChart2", href: "/institute-analytics", roles: ["Admin", "Demo", "SalesManager"] },
     ],
   },
   {
     id: "section-projects",
-    heading: "PROJECTS & ACTIVITIES",
+    heading: "ACTIVITIES & OPERATIONS",
     items: [
-      { id: "item-projects", name: "Projects", icon: "FolderOpen", href: "/projects", roles: ["Admin", "Employee", "Intern", "ProjectMember", "Demo"] },
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-meetings", name: "Meetings", icon: "Calendar", href: "/meetings", roles: ["Admin", "SalesManager", "Demo"] },
@@ -105,7 +114,7 @@ const defaultSidebarSections = [
 ];
 
 // --- Sortable Section Component ---
-const DEFAULT_HEADINGS = ["CRM", "PROJECTS & ACTIVITIES", "TEAMS", "AI AGENTS", "SUPPORT"];
+const DEFAULT_HEADINGS = ["CRM", "INSTITUTE", "ACTIVITIES & OPERATIONS", "TEAMS", "AI AGENTS", "SUPPORT"];
 const ITEM_KEY_OVERRIDES: Record<string, string> = {
   "item-teams": "team_directory",
   "item-products": "catalog",
@@ -126,6 +135,8 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
     const v = t(k);
     return v === k ? item.name : v;
   };
+  const sectionTranslationKey = `sidebar.section_${sidebarSectionKey(section.id)}`;
+  const sectionTranslation = t(sectionTranslationKey);
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -183,7 +194,7 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
                 className="flex-1 text-[9px] font-bold tracking-[0.1em] uppercase flex justify-between items-center cursor-pointer select-none hover:opacity-80 transition-opacity"
                 style={{ color: "var(--text-secondary)" }}
               >
-                <span>{DEFAULT_HEADINGS.includes(section.heading || "") ? t(`sidebar.section_${sidebarSectionKey(section.id)}`) : section.heading}</span>
+                <span>{DEFAULT_HEADINGS.includes(section.heading || "") && sectionTranslation !== sectionTranslationKey ? sectionTranslation : section.heading}</span>
                 <div className="flex items-center gap-1">
                   {isEditMode && (
                     <Edit2 onClick={(e) => { e.stopPropagation(); setIsEditing(true); }} className="w-2.5 h-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -391,9 +402,12 @@ export function Sidebar({ role }: SidebarProps) {
 
             const stripDisabled = (sec: any) => ({
               ...sec,
+              heading: sec.heading === "PROJECTS & ACTIVITIES" ? "ACTIVITIES & OPERATIONS" : sec.heading,
               items: (sec.items || []).filter((i: any) =>
                 !String(i.id || "").toLowerCase().includes("automation") &&
-                !String(i.href || "").toLowerCase().includes("automation")),
+                !String(i.href || "").toLowerCase().includes("automation") &&
+                i.id !== "item-projects" &&
+                i.href !== "/projects"),
             });
             const mergedSectionsClean = mergedSections.map(stripDisabled);
             

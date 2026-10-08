@@ -2,11 +2,14 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Plus, Check, X, Shield, Mail, Phone, Loader2, Briefcase, GraduationCap, Target, Ticket, CheckCircle, PlayCircle, Layers, Activity } from "lucide-react";
+import { Users, Plus, Check, X, Shield, Mail, Phone, Loader2, Briefcase, GraduationCap, Target, Ticket, CheckCircle, PlayCircle, Layers, Activity, Star, UserCog } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { cn } from "@/lib/utils";
 import PageGuide from "@/components/PageGuide";
 import { useLanguage } from "@/context/LanguageContext";
+
+interface SalesTeamMetric { user_id: number; leads_assigned: number; students_enrolled: number; conversion_rate: number; revenue_collected?: number; assigned_workload?: number; demos_scheduled?: number; demos_attended?: number; demos_missed?: number; demo_to_conversion_count?: number; demo_to_conversion_rate?: number; }
+interface InstructorTeamMetric { id: number; name: string; email?: string | null; students: number; batches_active: number; batches_upcoming: number; batches_completed: number; avg_rating: number; }
 
 export default function TeamsPage() {
   const { t } = useLanguage();
@@ -24,6 +27,7 @@ export default function TeamsPage() {
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [userStats, setUserStats] = useState<any>(null);
   const [loadingStats, setLoadingStats] = useState(false);
+  const [instituteTeam, setInstituteTeam] = useState<{ sales: SalesTeamMetric[]; instructors: InstructorTeamMetric[] }>({ sales: [], instructors: [] });
 
   const handleUserClick = async (u: any) => {
     setSelectedUser(u);
@@ -57,6 +61,13 @@ export default function TeamsPage() {
 
   useEffect(() => {
     fetchUsers();
+  }, []);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/institute/team-performance`)
+      .then(response => response.ok ? response.json() : Promise.reject(new Error("Team metrics unavailable")))
+      .then(data => setInstituteTeam({ sales: data.sales || [], instructors: data.instructors || [] }))
+      .catch(error => console.warn("Could not load institute team metrics", error));
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -133,8 +144,12 @@ export default function TeamsPage() {
             <span className="text-xs font-bold text-gray-400 bg-gray-100 dark:bg-zinc-800 px-3 py-1 rounded-full">{salesTeam.length} {t("teams.members")}</span>
           </div>
           <div className="divide-y divide-gray-100 dark:divide-zinc-800 flex-1">
-            {salesTeam.map(u => (
-              <div key={u.id} className="p-5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-950/50 transition-colors cursor-pointer"
+            {salesTeam.map(u => {
+              const metric = instituteTeam.sales.find(item => item.user_id === u.id);
+              const attended = metric?.demos_attended || 0;
+              const missed = metric?.demos_missed || 0;
+              const demoOutcomes = attended + missed;
+              return <div key={u.id} className="p-5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-950/50 transition-colors cursor-pointer"
                 onClick={() => handleUserClick(u)}>
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 rounded-full bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-black text-lg">
@@ -143,6 +158,9 @@ export default function TeamsPage() {
                   <div>
                     <p className="text-sm font-black text-gray-900 dark:text-zinc-50">{u.name || t("teams.unnamed")}</p>
                     <p className="text-xs font-medium text-gray-500 dark:text-zinc-400 mt-0.5">{u.email}</p>
+                    <p className="mt-1 text-[11px] text-gray-500 dark:text-zinc-400">{metric?.leads_assigned || 0} leads · {metric?.students_enrolled || 0} enrollments · {metric?.conversion_rate || 0}% converted · INR {(metric?.revenue_collected || 0).toLocaleString("en-IN")} collected</p>
+                    <p className="mt-1 text-[11px] text-gray-500 dark:text-zinc-400">Demos: {attended} attended · {metric?.demos_scheduled || 0} scheduled · {missed} missed · {metric?.demo_to_conversion_rate || 0}% attended-demo conversion</p>
+                    <div role="img" aria-label={`${attended} demos attended and ${missed} demos missed`} className="mt-1.5 flex h-1.5 max-w-64 overflow-hidden rounded-full bg-gray-100 dark:bg-zinc-800"><span className="h-full bg-emerald-500" style={{ width: `${demoOutcomes ? attended / demoOutcomes * 100 : 0}%` }} /><span className="h-full bg-rose-500" style={{ width: `${demoOutcomes ? missed / demoOutcomes * 100 : 0}%` }} /></div>
                   </div>
                 </div>
                 <div className="flex flex-col items-end gap-1">
@@ -150,8 +168,8 @@ export default function TeamsPage() {
                     {u.role}
                   </span>
                 </div>
-              </div>
-            ))}
+              </div>;
+            })}
             {salesTeam.length === 0 && (
               <div className="p-10 text-center flex flex-col items-center">
                 <Users className="w-10 h-10 text-gray-300 dark:text-zinc-700 mb-3" />
@@ -200,6 +218,11 @@ export default function TeamsPage() {
           </div>
         </div>
       </div>
+
+      <section className="space-y-4">
+        <div className="flex items-end justify-between gap-4"><div><h2 className="flex items-center gap-2 text-xl font-bold text-gray-900 dark:text-zinc-50"><UserCog className="h-5 w-5 text-emerald-700" />Instructor team</h2><p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">Student load, assigned teaching batches, and learner feedback.</p></div><span className="text-sm text-gray-500 dark:text-zinc-400">{instituteTeam.instructors.length} instructors</span></div>
+        {instituteTeam.instructors.length === 0 ? <div className="rounded-lg border border-dashed border-gray-300 px-6 py-10 text-center text-sm text-gray-500 dark:border-zinc-700 dark:text-zinc-400">Add instructors in the Instructors section to see their workload here.</div> : <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{instituteTeam.instructors.map(instructor => <button key={instructor.id} type="button" onClick={() => window.location.assign(`/instructors/${instructor.id}`)} className="rounded-lg border border-gray-200 bg-white p-4 text-left transition hover:border-emerald-500 dark:border-zinc-800 dark:bg-zinc-900"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-gray-900 dark:text-white">{instructor.name}</p><p className="mt-1 text-xs text-gray-500 dark:text-zinc-400">{instructor.email || "No email"}</p></div><span className="inline-flex items-center gap-1 text-sm font-semibold text-amber-700 dark:text-amber-300"><Star className="h-3.5 w-3.5 fill-current" />{instructor.avg_rating || "—"}</span></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-gray-100 pt-3 text-center dark:border-zinc-800"><div><p className="font-bold">{instructor.students}</p><p className="text-[10px] text-gray-500">Students</p></div><div><p className="font-bold">{instructor.batches_active}</p><p className="text-[10px] text-gray-500">Active</p></div><div><p className="font-bold">{instructor.batches_upcoming}</p><p className="text-[10px] text-gray-500">Upcoming</p></div><div><p className="font-bold">{instructor.batches_completed}</p><p className="text-[10px] text-gray-500">Past</p></div></div></button>)}</div>}
+      </section>
 
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in">

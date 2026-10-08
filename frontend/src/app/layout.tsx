@@ -26,6 +26,7 @@ import GoogleProviderWrapper from "@/components/GoogleProviderWrapper";
 import { GlobalLimitModal } from "@/components/GlobalLimitModal";
 import { NotificationProvider } from "@/context/NotificationContext";
 import GlobalFooter from "@/components/GlobalFooter";
+import InstitutionPortalShell from "@/components/InstitutionPortalShell";
 
 function AdminMainContent({ children }: { children: React.ReactNode }) {
   const { collapsed } = useSidebar();
@@ -35,7 +36,7 @@ function AdminMainContent({ children }: { children: React.ReactNode }) {
   return (
     <main className={`relative z-10 min-h-screen transition-all duration-300 ${collapsed ? "ml-[72px]" : "ml-[280px]"}`}>
       <TopRightControls />
-      <div className={isClientDetail ? "w-full h-full pr-20" : "pt-[76px] px-6 md:px-8 pb-6 md:pb-8 pr-20 md:pr-24 max-w-[1600px] mx-auto h-full"}>
+      <div className={isClientDetail ? "w-full h-full pr-4 md:pr-20" : "pt-[76px] px-4 sm:px-6 md:px-8 pb-6 md:pb-8 pr-4 sm:pr-6 md:pr-24 max-w-[1600px] mx-auto h-full"}>
         {children}
       </div>
     </main>
@@ -121,6 +122,14 @@ function AppContent({ children }: { children: React.ReactNode }) {
       <SidebarProvider>
         <ClientLayout>{children}</ClientLayout>
       </SidebarProvider>
+    );
+  }
+
+  if (role === "Student" || role === "Instructor") {
+    return (
+      <InstitutionPortalShell role={role}>
+        {children}
+      </InstitutionPortalShell>
     );
   }
 
@@ -222,17 +231,19 @@ export default function RootLayout({
         <script
           dangerouslySetInnerHTML={{
             __html: `
+              // Remove the retired service worker and its legacy page cache. It
+              // could serve the old static showcase briefly during navigation.
               if ('serviceWorker' in navigator) {
                 window.addEventListener('load', function() {
-                  navigator.serviceWorker.register('/sw.js').catch(function(err) {
-                    console.log('ServiceWorker registration failed: ', err);
+                  navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                    registrations.forEach(function(registration) { registration.unregister(); });
                   });
-                  var refreshing = false;
-                  navigator.serviceWorker.addEventListener('controllerchange', function() {
-                    if (refreshing) return;
-                    refreshing = true;
-                    window.location.reload();
-                  });
+                  if ('caches' in window) {
+                    caches.keys().then(function(names) {
+                      names.filter(function(name) { return name.indexOf('serphawk-crm-') === 0; })
+                        .forEach(function(name) { caches.delete(name); });
+                    });
+                  }
                 });
               }
             `,
