@@ -12691,10 +12691,12 @@ def add_lead_followup(lead_id: int, body: ClientFollowUpRequest, session: Sessio
     # Log activity
     from datetime import datetime
     activity = ActivityLog(
+        tenant_id=lead.tenant_id,
+        userId=actor.id,
         lead_id=lead_id,
         action="Added Follow-up Note",
         details=body.content,
-        timestamp=datetime.utcnow()
+        createdAt=datetime.utcnow(),
     )
     session.add(activity)
 
@@ -12800,10 +12802,12 @@ def add_lead_note(lead_id: int, body: LeadNoteRequest, session: Session = Depend
     session.add(lead)
 
     activity = ActivityLog(
+        tenant_id=lead.tenant_id,
+        userId=author_id,
         lead_id=lead_id,
         action="Added Note",
         details=content,
-        timestamp=now,
+        createdAt=now,
     )
     session.add(activity)
 
