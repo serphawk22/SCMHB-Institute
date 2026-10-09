@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Plus, Check, X, Shield, Mail, Phone, Loader2, Briefcase, GraduationCap, Target, Ticket, CheckCircle, PlayCircle, Layers, Activity, Star, UserCog } from "lucide-react";
+import { Users, Plus, Check, X, Shield, Mail, Phone, Loader2, Briefcase, GraduationCap, Target, Ticket, CheckCircle, PlayCircle, Layers, Activity, Star, UserCog, Video } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { cn } from "@/lib/utils";
 import PageGuide from "@/components/PageGuide";
@@ -371,15 +371,15 @@ export default function TeamsPage() {
                     {userStats.type === "sales" && (
                       <>
                         <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-gray-50 dark:bg-zinc-900 rounded-2xl p-5 border border-gray-100 dark:border-zinc-800">
-                            <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 mb-2">
-                              <Briefcase className="w-5 h-5" />
-                              <span className="text-xs font-black uppercase tracking-wider">Clients</span>
+                          <div className="bg-blue-50 dark:bg-blue-500/5 rounded-2xl p-5 border border-blue-100 dark:border-blue-500/10">
+                            <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 mb-2">
+                              <GraduationCap className="w-5 h-5" />
+                              <span className="text-xs font-black uppercase tracking-wider">Students</span>
                             </div>
                             <p className="text-3xl font-black text-gray-900 dark:text-white">
-                              {userStats.clients_handling}
+                              {userStats.students ?? userStats.students_enrolled ?? 0}
                             </p>
-                            <p className="text-xs font-bold text-gray-400 mt-1">Active Accounts</p>
+                            <p className="text-xs font-bold text-gray-400 mt-1">Enrolled &amp; Converted</p>
                           </div>
                           
                           <div className="bg-emerald-50 dark:bg-emerald-500/5 rounded-2xl p-5 border border-emerald-100 dark:border-emerald-500/10">
@@ -388,14 +388,20 @@ export default function TeamsPage() {
                               <span className="text-xs font-black uppercase tracking-wider">Leads</span>
                             </div>
                             <p className="text-3xl font-black text-gray-900 dark:text-white">
-                              {userStats.leads_converted}
+                              {userStats.leads ?? userStats.leads_assigned ?? 0}
                             </p>
-                            <p className="text-xs font-bold text-gray-400 mt-1">Converted</p>
+                            <p className="text-xs font-bold text-gray-400 mt-1">{userStats.leads_converted ?? 0} Converted</p>
                           </div>
-                          <div className="bg-rose-50 dark:bg-rose-500/5 rounded-2xl p-5 border border-rose-100 dark:border-rose-500/10">
-                            <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 mb-2"><Ticket className="w-5 h-5" /><span className="text-xs font-black uppercase tracking-wider">Cases Assigned</span></div>
-                            <p className="text-3xl font-black text-gray-900 dark:text-white">{userStats.cases_assigned || 0}</p>
-                            <p className="text-xs font-bold text-gray-400 mt-1">Support ownership</p>
+
+                          <div className="col-span-2 bg-amber-50 dark:bg-amber-500/5 rounded-2xl p-5 border border-amber-100 dark:border-amber-500/10">
+                            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 mb-2">
+                              <Video className="w-5 h-5" />
+                              <span className="text-xs font-black uppercase tracking-wider">Demo Scheduled</span>
+                            </div>
+                            <p className="text-3xl font-black text-gray-900 dark:text-white">
+                              {userStats.demos_scheduled ?? 0}
+                            </p>
+                            <p className="text-xs font-bold text-gray-400 mt-1">Scheduled Sessions</p>
                           </div>
                         </div>
 

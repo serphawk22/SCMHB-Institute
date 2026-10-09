@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
-from typing import List
+from typing import List, Optional, Union
 from pydantic import BaseModel
-from database import engine, User, Deal, ConversationLog, Lead, LeadDemoSession, Student, Enrollment, ClientProfile, ProjectTicket
+from database import engine, User, Deal, ConversationLog, Lead, LeadDemoSession, Student, Enrollment, ClientProfile, Instructor, Batch, InstructorFeedback
 from modules.api_tracker import current_salesperson_id
 
 router = APIRouter(prefix="/leaderboard", tags=["Leaderboard"])
@@ -32,9 +32,69 @@ class LeaderboardEntry(BaseModel):
     advance_collected: float = 0.0
     amount_due: float = 0.0
 
-@router.get("", response_model=List[LeaderboardEntry])
+class InstructorLeaderboardEntry(BaseModel):
+    id: int
+    instructor_id: int
+    name: str
+    email: Optional[str] = None
+    expertise: Optional[str] = None
+    qualification: Optional[str] = None
+    experience_years: int = 0
+    is_active: bool = True
+    avg_rating: float = 0.0
+    students_taught: int = 0
+    batches_total: int = 0
+    batches_active: int = 0
+    batches_upcoming: int = 0
+    batches_completed: int = 0
+    feedback_count: int = 0
+
+def _get_instructors_leaderboard(session: Session) -> List[InstructorLeaderboardEntry]:
+    instructors = session.exec(select(Instructor).order_by(Instructor.name)).all()
+    results = []
+    for inst in instructors:
+        batches = session.exec(select(Batch).where(Batch.instructor_id == inst.id)).all()
+        students = set()
+        for b in batches:
+            active_students = session.exec(
+                select(Enrollment.student_id).where(Enrollment.batch_id == b.id, Enrollment.status == "Active")
+            ).all()
+            students.update(active_students)
+        feedback = session.exec(select(InstructorFeedback).where(InstructorFeedback.instructor_id == inst.id)).all()
+        avg_rating = round(sum(f.rating for f in feedback) / len(feedback), 1) if feedback else (inst.avg_rating or 0.0)
+        results.append(InstructorLeaderboardEntry(
+            id=inst.id,
+            instructor_id=inst.id,
+            name=inst.name,
+            email=inst.email,
+            expertise=inst.expertise,
+            qualification=inst.qualification,
+            experience_years=inst.experience_years or 0,
+            is_active=inst.is_active,
+            avg_rating=avg_rating,
+            students_taught=len(students) or inst.total_students or 0,
+            batches_total=len(batches) or inst.total_batches or 0,
+            batches_active=sum(1 for b in batches if b.status == "Active"),
+            batches_upcoming=sum(1 for b in batches if b.status == "Upcoming"),
+            batches_completed=sum(1 for b in batches if b.status == "Completed"),
+            feedback_count=len(feedback),
+        ))
+    results.sort(key=lambda x: (x.avg_rating, x.students_taught, x.batches_active), reverse=True)
+    return results
+
+@router.get("/instructors", response_model=List[InstructorLeaderboardEntry])
+def get_instructors_leaderboard_route(session: Session = Depends(get_session)):
+    return _get_instructors_leaderboard(session)
+
+@router.get("", response_model=Union[List[LeaderboardEntry], List[InstructorLeaderboardEntry]])
 def get_leaderboard(kind: str = "all", session: Session = Depends(get_session)):
-    roles = ["Employee", "SalesManager"] if kind in ("sales", "institute") else ["ProjectMember", "Intern"] if kind == "tickets" else ["Employee", "SalesManager", "ProjectMember", "Intern"]
+    if kind in ("instructors", "instructor"):
+        return _get_instructors_leaderboard(session)
+
+    if kind == "tickets":
+        return []
+
+    roles = ["Employee", "SalesManager"] if kind in ("sales", "institute") else ["Employee", "SalesManager", "ProjectMember", "Intern"]
     query = select(User).where(User.role.in_(roles))
     requester_id = current_salesperson_id.get()
     if requester_id:
@@ -120,11 +180,6 @@ def get_leaderboard(kind: str = "all", session: Session = Depends(get_session)):
         calls_made = len(calls)
         leads_managed = len(session.exec(select(Lead).where(Lead.owner_id == user.id)).all())
         clients_managed = len(session.exec(select(ClientProfile).where(ClientProfile.userId == user.id)).all())
-        all_tickets = session.exec(select(ProjectTicket)).all()
-        owner_name = (user.name or "").strip().lower()
-        assigned_tickets = [ticket for ticket in all_tickets if owner_name and (ticket.current_owner or "").strip().lower() == owner_name]
-        tickets_in_production = sum(1 for ticket in assigned_tickets if ticket.current_state == "Prod Release")
-        tickets_completed = sum(1 for ticket in assigned_tickets if ticket.date_release_prod or ticket.current_state == "Prod Release")
 
         leaderboard.append(LeaderboardEntry(
             user_id=user.id,
@@ -133,12 +188,12 @@ def get_leaderboard(kind: str = "all", session: Session = Depends(get_session)):
             deals_closed=deals_closed,
             revenue_closed=revenue_closed,
             meetings_booked=meetings_booked,
-            calls_made=calls_made
-            , leads_managed=leads_managed
-            , clients_managed=clients_managed
-            , tickets_assigned=len(assigned_tickets)
-            , tickets_in_production=tickets_in_production
-            , tickets_completed=tickets_completed
+            calls_made=calls_made,
+            leads_managed=leads_managed,
+            clients_managed=clients_managed,
+            tickets_assigned=0,
+            tickets_in_production=0,
+            tickets_completed=0,
         ))
         
     # Sort by revenue as primary metric

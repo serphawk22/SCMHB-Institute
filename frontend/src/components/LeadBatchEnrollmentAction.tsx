@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -26,6 +26,12 @@ interface LeadBatchEnrollmentActionProps {
   isConverted?: boolean;
   compact?: boolean;
   onEnrolled?: () => void | Promise<void>;
+  /** Open the modal programmatically (e.g. when a lead is dragged to Converted). */
+  externalOpen?: boolean;
+  /** Called whenever the modal closes. */
+  onExternalClose?: () => void;
+  /** Don't render the trigger button (use together with externalOpen). */
+  hideTrigger?: boolean;
 }
 
 export default function LeadBatchEnrollmentAction({
@@ -36,6 +42,9 @@ export default function LeadBatchEnrollmentAction({
   isConverted = false,
   compact = false,
   onEnrolled,
+  externalOpen = false,
+  onExternalClose,
+  hideTrigger = false,
 }: LeadBatchEnrollmentActionProps) {
   const router = useRouter();
   const [isOpen, setIsOpen] = useState(false);
@@ -43,6 +52,8 @@ export default function LeadBatchEnrollmentAction({
   const [batches, setBatches] = useState<BatchOption[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState('');
   const [advance, setAdvance] = useState('');
+  const [discount, setDiscount] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
   const [paymentMode, setPaymentMode] = useState('UPI');
   const [courseFee, setCourseFee] = useState(0);
   const [loadingBatches, setLoadingBatches] = useState(false);
@@ -61,12 +72,35 @@ export default function LeadBatchEnrollmentAction({
     };
   };
 
+  const wasOpenRef = useRef(false);
+
   const openEnrollment = async (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
+    await startEnrollment();
+  };
+
+  useEffect(() => {
+    if (externalOpen) void startEnrollment();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      wasOpenRef.current = true;
+    } else if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      onExternalClose?.();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  const startEnrollment = async () => {
     setIsOpen(true);
     setStep('batch');
     setSelectedBatchId('');
     setAdvance('');
+    setDiscount('');
+    setDiscountReason('');
     setError('');
     setEnrolledStudentId(null);
     setLoadingBatches(true);
@@ -114,7 +148,11 @@ export default function LeadBatchEnrollmentAction({
       const response = await fetch(`${API_BASE_URL}/leads/${leadId}/convert-to-student`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-        body: JSON.stringify({ batch_id: Number(selectedBatchId) }),
+        body: JSON.stringify({ 
+          batch_id: Number(selectedBatchId),
+          discount: Number(discount) || 0,
+          discount_reason: discountReason.trim() || undefined,
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not enroll this lead.');
@@ -169,6 +207,7 @@ export default function LeadBatchEnrollmentAction({
 
   return (
     <>
+      {!hideTrigger && (
       <button
         type="button"
         onClick={openEnrollment}
@@ -181,6 +220,7 @@ export default function LeadBatchEnrollmentAction({
         <GraduationCap className="h-4 w-4" />
         {!compact && (isConverted ? 'Re-enroll / New batch' : 'Enroll as student')}
       </button>
+      )}
 
       <AnimatePresence>
         {isOpen && (
@@ -251,14 +291,67 @@ export default function LeadBatchEnrollmentAction({
 
                     {selectedBatchId && (
                       <>
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-zinc-700 dark:bg-zinc-800">
-                          <p className="text-xs font-semibold text-slate-700 dark:text-zinc-200">
-                            Course fee: ₹{courseFee.toLocaleString()}
-                          </p>
-                          <p className="mt-0.5 text-[11px] text-slate-500">Collect advance payment now, rest can be paid later.</p>
+                        <div className="rounded-xl border border-slate-200 bg-slate-50/90 p-3.5 space-y-1.5 dark:border-zinc-700 dark:bg-zinc-800/90">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="text-slate-600 dark:text-zinc-400 font-medium">Standard course fee:</span>
+                            <span className="font-bold text-slate-800 dark:text-zinc-200">₹{courseFee.toLocaleString("en-IN")}</span>
+                          </div>
+                          {(Number(discount) > 0) && (
+                            <div className="flex justify-between items-center text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                              <span>Discount:</span>
+                              <span className="font-bold">-₹{Number(discount).toLocaleString("en-IN")}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center text-xs pt-1 border-t border-slate-200/80 dark:border-zinc-700/80">
+                            <span className="font-bold text-slate-800 dark:text-zinc-200">Final fee payable:</span>
+                            <span className="font-black text-slate-900 dark:text-white">
+                              ₹{Math.max(0, courseFee - (Number(discount) || 0)).toLocaleString("en-IN")}
+                            </span>
+                          </div>
+                          {(Number(advance) > 0) && (
+                            <div className="flex justify-between items-center text-xs text-blue-600 dark:text-blue-400 font-medium">
+                              <span>Advance payment:</span>
+                              <span className="font-bold">₹{Number(advance).toLocaleString("en-IN")}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center text-[11px] text-slate-500 pt-1 border-t border-slate-200/60 dark:border-zinc-700/60">
+                            <span>Balance due after enrollment:</span>
+                            <span className="font-bold text-rose-600 dark:text-rose-400">
+                              ₹{Math.max(0, courseFee - (Number(discount) || 0) - (Number(advance) || 0)).toLocaleString("en-IN")}
+                            </span>
+                          </div>
                         </div>
+
+                        {/* Discount Fields */}
                         <div className="grid grid-cols-2 gap-3">
-                          <label className="block text-xs font-medium text-slate-600 dark:text-zinc-300">
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-zinc-300">
+                            Discount (₹)
+                            <input
+                              type="number"
+                              min="0"
+                              max={courseFee}
+                              step="0.01"
+                              value={discount}
+                              onChange={e => setDiscount(e.target.value)}
+                              placeholder="0"
+                              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-zinc-600 dark:bg-zinc-950 dark:text-white"
+                            />
+                          </label>
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-zinc-300">
+                            Discount reason
+                            <input
+                              type="text"
+                              value={discountReason}
+                              onChange={e => setDiscountReason(e.target.value)}
+                              placeholder="e.g. Scholarship, Early bird"
+                              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-zinc-600 dark:bg-zinc-950 dark:text-white"
+                            />
+                          </label>
+                        </div>
+
+                        {/* Advance Payment Fields */}
+                        <div className="grid grid-cols-2 gap-3">
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-zinc-300">
                             Advance payment (₹)
                             <input
                               type="number"
@@ -267,15 +360,15 @@ export default function LeadBatchEnrollmentAction({
                               value={advance}
                               onChange={e => setAdvance(e.target.value)}
                               placeholder="0"
-                              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-950 dark:text-white"
+                              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-zinc-600 dark:bg-zinc-950 dark:text-white"
                             />
                           </label>
-                          <label className="block text-xs font-medium text-slate-600 dark:text-zinc-300">
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-zinc-300">
                             Payment method
                             <select
                               value={paymentMode}
                               onChange={e => setPaymentMode(e.target.value)}
-                              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-950 dark:text-white"
+                              className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 dark:border-zinc-600 dark:bg-zinc-950 dark:text-white"
                             >
                               {['UPI', 'Cash', 'Card', 'Bank Transfer'].map(m => <option key={m}>{m}</option>)}
                             </select>
@@ -316,6 +409,7 @@ export default function LeadBatchEnrollmentAction({
                       <p className="font-semibold text-emerald-900 dark:text-emerald-200">{leadName} is now a student!</p>
                       <p className="mt-0.5 text-xs text-emerald-700 dark:text-emerald-400">
                         Student profile created and enrollment confirmed.
+                        {Number(discount) > 0 && ` ₹${Number(discount).toLocaleString()} discount applied.`}
                         {Number(advance) > 0 && ` ₹${Number(advance).toLocaleString()} advance recorded.`}
                       </p>
                     </div>

@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, GraduationCap, Layers, UserCog
+  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -41,7 +41,7 @@ const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
-  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock
 };
 
 interface SidebarProps {
@@ -63,7 +63,7 @@ const defaultSidebarSections = [
     heading: "ADMISSIONS & SALES",
     items: [
       { id: "item-leads", name: "Student Leads", icon: "GraduationCap", href: "/leads", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
-      { id: "item-deals", name: "Sales Pipeline", icon: "Briefcase", href: "/pipeline", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-schedule", name: "Follow-ups & Demos", icon: "CalendarClock", href: "/schedule", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
     ],
   },
   {
@@ -411,7 +411,9 @@ export function Sidebar({ role }: SidebarProps) {
                 !String(i.id || "").toLowerCase().includes("automation") &&
                 !String(i.href || "").toLowerCase().includes("automation") &&
                 i.id !== "item-projects" &&
-                i.href !== "/projects"),
+                i.href !== "/projects" &&
+                i.id !== "item-deals" &&
+                i.href !== "/pipeline"),
             });
             const mergedSectionsClean = mergedSections.map(stripDisabled);
             

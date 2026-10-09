@@ -2179,7 +2179,7 @@ def omnisearch(q: str, session: Session = Depends(get_session)):
         Deal.title.ilike(search_term)
     ).limit(5)).all()
     for d in deals:
-        results.append({"type": "Deal", "title": d.title, "subtitle": f"${d.value}", "route": f"/pipeline"})
+        results.append({"type": "Deal", "title": d.title, "subtitle": f"${d.value}", "route": f"/leads"})
 
     return {"results": results}
 
@@ -2832,21 +2832,33 @@ def get_user_stats(user_id: int, session: Session = Depends(get_session)):
         raise HTTPException(status_code=404, detail="User not found")
         
     # Sales team stats
-    if user.role in ["Admin", "SalesManager", "Employee"]:
-        # Clients handling
+    if user.role in ["Admin", "SalesManager", "Employee", "Sales", "Demo"]:
+        from database import Student, Enrollment, LeadDemoSession
+        assigned_leads = session.exec(select(Lead).where(Lead.owner_id == user.id)).all()
+        assigned_lead_ids = {lead.id for lead in assigned_leads if lead.id is not None}
+        converted = [lead for lead in assigned_leads if lead.is_converted or lead.converted_student_id]
+        
+        assigned_students = session.exec(select(Student).where(Student.assigned_salesperson_id == user.id)).all()
+        enrolled_by_user = session.exec(select(Enrollment).where(Enrollment.enrolled_by == user.id)).all()
+        student_ids = {s.id for s in assigned_students} | {e.student_id for e in enrolled_by_user} | {lead.converted_student_id for lead in converted if lead.converted_student_id}
+        students_count = len(student_ids)
+
+        all_demos = session.exec(select(LeadDemoSession)).all()
+        user_demos = [d for d in all_demos if d.created_by == user.id or d.lead_id in assigned_lead_ids]
+        demos_scheduled_count = sum(1 for d in user_demos if d.status == "Scheduled")
+
         clients_count = len(session.exec(select(ClientProfile).where(ClientProfile.assignedEmployeeId == user.id)).all())
-        
-        # Leads converted
-        converted_leads_count = len(session.exec(select(Lead).where(Lead.owner_id == user.id, Lead.is_converted == True)).all())
-        
-        # Current active tasks
         active_tasks = session.exec(select(Task).where(Task.assigned_to == user.id, Task.status.notin_(["approved", "rejected"]))).all()
         assigned_cases = session.exec(select(Case).where(Case.assigned_to == user.id)).all()
         
         return {
             "type": "sales",
+            "students": students_count,
+            "students_enrolled": students_count,
+            "leads": len(assigned_leads),
+            "leads_converted": len(converted),
+            "demos_scheduled": demos_scheduled_count,
             "clients_handling": clients_count,
-            "leads_converted": converted_leads_count,
             "cases_assigned": len(assigned_cases),
             "active_tasks": [
                 {"id": t.id, "title": t.title, "status": t.status, "priority": t.priority} 
@@ -5413,7 +5425,7 @@ def reports_summary(
     collection_percentage = round((advance_collected / total_tuition_val * 100), 1) if total_tuition_val > 0 else 100.0
 
     # Demos
-    demo_leads = [l for l in leads_in_range if l.status in ("Demo Scheduled", "Demo Completed")]
+    demo_leads = [l for l in leads_in_range if l.status in ("Demo", "Demo Scheduled", "Demo Completed")]
     demos_scheduled = len(demo_leads) + len(demos_in_range) + sum(1 for m in meetings_in_range if m.meeting_type == "Demo")
     demos_successful = (
         sum(1 for l in demo_leads if l.is_converted or l.status in ("Demo Completed", "Enrolled") or l.converted_student_id)
@@ -5477,7 +5489,7 @@ def reports_summary(
         rep_leads_all = [l for l in all_leads if l.owner_id == uid]
 
         # Rep's demos
-        rep_demo_leads = [l for l in rep_leads_range if l.status in ("Demo Scheduled", "Demo Completed")]
+        rep_demo_leads = [l for l in rep_leads_range if l.status in ("Demo", "Demo Scheduled", "Demo Completed")]
         rep_demos_sched = len(rep_demo_leads) + sum(1 for d in demos_in_range if d.created_by == uid) + sum(1 for m in meetings_in_range if m.host_id == uid and m.meeting_type == "Demo")
         rep_demos_succ = (
             sum(1 for l in rep_demo_leads if l.is_converted or l.status in ("Demo Completed", "Enrolled") or l.converted_student_id)
@@ -5568,7 +5580,7 @@ def reports_summary(
             "pending_due": 0.0,
         })
         item["total_leads"] += 1
-        if l.status in ("Demo Scheduled", "Demo Completed"):
+        if l.status in ("Demo", "Demo Scheduled", "Demo Completed"):
             item["demos_scheduled"] += 1
         if l.is_converted or l.status == "Enrolled" or l.converted_student_id:
             item["converted_students"] += 1
@@ -5723,7 +5735,7 @@ def reports_summary(
         d_str = l.created_at.date().isoformat()
         if d_str in daily_map:
             daily_map[d_str]["leads"] += 1
-            if l.status in ("Demo Scheduled", "Demo Completed"):
+            if l.status in ("Demo", "Demo Scheduled", "Demo Completed"):
                 daily_map[d_str]["demos"] += 1
 
     for d in all_demos:
@@ -11100,8 +11112,23 @@ def get_leads(owner_id: Optional[int] = None, session: Session = Depends(get_ses
         query = query.where(Lead.tenant_id == tenant_id)
     leads = session.exec(query.order_by(Lead.created_at.desc())).all()
     results = []
+    _lead_ids = [l.id for l in leads]
+    _owner_ids = list({l.owner_id for l in leads if l.owner_id})
+    _owner_names = {}
+    if _owner_ids:
+        _owner_names = {u.id: u.name for u in session.exec(select(User).where(User.id.in_(_owner_ids))).all()}
+    _next_fu, _next_demo = {}, {}
+    if _lead_ids:
+        _now = datetime.utcnow()
+        for fu in session.exec(select(LeadFollowUp).where(LeadFollowUp.lead_id.in_(_lead_ids), LeadFollowUp.status == "Pending").order_by(LeadFollowUp.scheduled_at)).all():
+            _next_fu.setdefault(fu.lead_id, fu.scheduled_at.isoformat())
+        for dm in session.exec(select(LeadDemoSession).where(LeadDemoSession.lead_id.in_(_lead_ids), LeadDemoSession.status == "Scheduled").order_by(LeadDemoSession.scheduled_at)).all():
+            _next_demo.setdefault(dm.lead_id, dm.scheduled_at.isoformat())
     for lead in leads:
         lead_item = lead.dict()
+        lead_item["owner_name"] = _owner_names.get(lead.owner_id)
+        lead_item["next_followup_at"] = _next_fu.get(lead.id)
+        lead_item["next_demo_at"] = _next_demo.get(lead.id)
         if lead.course_interest_id:
             course = session.get(Course, lead.course_interest_id)
             if course:
@@ -11552,7 +11579,7 @@ def update_lead(lead_id: int, body: LeadCreateRequest, session: Session = Depend
     lead = session.get(Lead, lead_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
-    for key, value in body.dict().items():
+    for key, value in body.dict(exclude_unset=True).items():
         setattr(lead, key, value)
     session.add(lead)
     session.commit()
@@ -11601,7 +11628,7 @@ def schedule_lead_demo(lead_id: int, body: LeadDemoCreateRequest, session: Sessi
         notes=(body.notes or "").strip() or None,
         created_by=actor.id,
     )
-    lead.status = "Demo Scheduled"
+    lead.status = "Demo"
     session.add(demo)
     session.add(lead)
     session.commit()
@@ -11627,6 +11654,161 @@ def update_lead_demo_session(demo_session_id: int, body: LeadDemoUpdateRequest, 
     session.commit()
     session.refresh(demo)
     return {"demo_session": _lead_demo_dict(demo)}
+
+
+LEAD_STAGES = ["New", "Contacted", "Not Responded", "Follow-up", "Demo", "Converted", "Lost"]
+_SALES_SCOPED_ROLES = ("Employee", "Intern", "SalesManager", "Sales", "Demo")
+_LEAD_SCHEDULE_ROLES = ["Admin", "Employee", "Intern", "SalesManager", "Sales", "Demo"]
+
+
+class LeadFollowUpCreateRequest(BaseModel):
+    scheduled_at: datetime
+    notes: Optional[str] = None
+
+
+class LeadFollowUpUpdateRequest(BaseModel):
+    scheduled_at: Optional[datetime] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LeadStatusRequest(BaseModel):
+    status: str
+
+
+def _require_lead_schedule_access(lead: Optional[Lead], actor: User):
+    if not lead or (lead.tenant_id and actor.role != "SuperAdmin" and lead.tenant_id != actor.tenant_id):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if _normalize_role(actor.role) in _SALES_SCOPED_ROLES and lead.owner_id != actor.id:
+        raise HTTPException(status_code=403, detail="You can only manage leads assigned to you")
+
+
+def _lead_followup_dict(fu: LeadFollowUp):
+    return {
+        "id": fu.id,
+        "lead_id": fu.lead_id,
+        "scheduled_at": fu.scheduled_at.isoformat(),
+        "status": fu.status,
+        "notes": fu.notes,
+        "created_at": fu.created_at.isoformat(),
+    }
+
+
+@app.post("/leads/{lead_id}/follow-ups")
+def schedule_lead_followup(lead_id: int, body: LeadFollowUpCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    lead = session.get(Lead, lead_id)
+    _require_lead_schedule_access(lead, actor)
+    fu = LeadFollowUp(
+        tenant_id=lead.tenant_id or actor.tenant_id,
+        lead_id=lead_id,
+        scheduled_at=body.scheduled_at,
+        notes=(body.notes or "").strip() or None,
+        created_by=actor.id,
+    )
+    lead.status = "Follow-up"
+    session.add(fu)
+    session.add(lead)
+    session.commit()
+    session.refresh(fu)
+    return {"follow_up": _lead_followup_dict(fu)}
+
+
+@app.patch("/lead-follow-ups/{follow_up_id}")
+def update_lead_followup(follow_up_id: int, body: LeadFollowUpUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    fu = session.get(LeadFollowUp, follow_up_id)
+    if not fu:
+        raise HTTPException(status_code=404, detail="Follow-up not found")
+    _require_lead_schedule_access(session.get(Lead, fu.lead_id), actor)
+    data = body.dict(exclude_unset=True)
+    if data.get("status") not in (None, "Pending", "Done", "Cancelled"):
+        raise HTTPException(status_code=422, detail="Choose Pending, Done, or Cancelled")
+    for key, value in data.items():
+        setattr(fu, key, value)
+    fu.updated_at = datetime.utcnow()
+    session.add(fu)
+    session.commit()
+    session.refresh(fu)
+    return {"follow_up": _lead_followup_dict(fu)}
+
+
+@app.patch("/leads/{lead_id}/status")
+def update_lead_stage(lead_id: int, body: LeadStatusRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    lead = session.get(Lead, lead_id)
+    _require_lead_schedule_access(lead, actor)
+    if body.status not in LEAD_STAGES:
+        raise HTTPException(status_code=422, detail=f"Status must be one of: {', '.join(LEAD_STAGES)}")
+    if body.status == "Converted" and not (lead.is_converted or lead.converted_student_id):
+        raise HTTPException(status_code=422, detail="Enroll the lead as a student to mark it Converted")
+    lead.status = body.status
+    if body.status == "Lost":
+        now = datetime.utcnow()
+        for fu in session.exec(select(LeadFollowUp).where(LeadFollowUp.lead_id == lead_id, LeadFollowUp.status == "Pending")).all():
+            fu.status = "Cancelled"
+            fu.updated_at = now
+            session.add(fu)
+        for dm in session.exec(select(LeadDemoSession).where(LeadDemoSession.lead_id == lead_id, LeadDemoSession.status == "Scheduled")).all():
+            dm.status = "Cancelled"
+            dm.updated_at = now
+            session.add(dm)
+    session.add(lead)
+    session.commit()
+    return {"ok": True, "status": lead.status}
+
+
+@app.get("/schedule/upcoming")
+def get_upcoming_schedule(kind: str = "all", include_done: bool = False, session: Session = Depends(get_session)):
+    """Scheduled follow-ups and demos, nearest first. Sales roles only see their own leads."""
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    lead_q = select(Lead)
+    if _normalize_role(actor.role) in _SALES_SCOPED_ROLES:
+        lead_q = lead_q.where(Lead.owner_id == actor.id)
+    tenant_id = current_tenant_id.get()
+    if tenant_id and tenant_id != 1:
+        lead_q = lead_q.where(Lead.tenant_id == tenant_id)
+    leads = {l.id: l for l in session.exec(lead_q).all()}
+    if not leads:
+        return {"items": []}
+    lead_ids = list(leads.keys())
+    owner_ids = list({l.owner_id for l in leads.values() if l.owner_id})
+    owners = {u.id: u.name for u in session.exec(select(User).where(User.id.in_(owner_ids))).all()} if owner_ids else {}
+    course_ids = list({l.course_interest_id for l in leads.values() if l.course_interest_id})
+    courses = {c.id: c.title for c in session.exec(select(Course).where(Course.id.in_(course_ids))).all()} if course_ids else {}
+
+    items = []
+
+    def _base(lead: Lead):
+        return {
+            "lead_id": lead.id,
+            "lead_name": lead.company_name,
+            "phone": lead.phone,
+            "email": lead.email,
+            "course": courses.get(lead.course_interest_id),
+            "owner_id": lead.owner_id,
+            "owner_name": owners.get(lead.owner_id),
+            "lead_status": lead.status,
+        }
+
+    if kind in ("all", "followup"):
+        fq = select(LeadFollowUp).where(LeadFollowUp.lead_id.in_(lead_ids))
+        if not include_done:
+            fq = fq.where(LeadFollowUp.status == "Pending")
+        for fu in session.exec(fq).all():
+            items.append({**_base(leads[fu.lead_id]), "id": fu.id, "type": "followup", "scheduled_at": fu.scheduled_at.isoformat(),
+                          "status": fu.status, "notes": fu.notes, "meeting_url": None, "_ts": fu.scheduled_at})
+    if kind in ("all", "demo"):
+        dq = select(LeadDemoSession).where(LeadDemoSession.lead_id.in_(lead_ids))
+        if not include_done:
+            dq = dq.where(LeadDemoSession.status == "Scheduled")
+        for dm in session.exec(dq).all():
+            items.append({**_base(leads[dm.lead_id]), "id": dm.id, "type": "demo", "scheduled_at": dm.scheduled_at.isoformat(),
+                          "status": dm.status, "notes": dm.notes, "meeting_url": dm.meeting_url, "_ts": dm.scheduled_at})
+    items.sort(key=lambda i: i["_ts"])
+    for i in items:
+        i.pop("_ts", None)
+    return {"items": items}
 
 
 @app.patch("/leads/{lead_id}/background-details")
@@ -12097,6 +12279,8 @@ def convert_lead_to_client(lead_id: int, session: Session = Depends(get_session)
 
 class LeadStudentEnrollmentRequest(BaseModel):
     batch_id: int
+    discount: Optional[float] = 0.0
+    discount_reason: Optional[str] = None
 
 
 @app.post("/leads/{lead_id}/convert-to-student")
@@ -12178,14 +12362,20 @@ def convert_lead_to_student(
             import string
 
             total_fee = course.price or 0.0
+            discount_val = max(0.0, float(body.discount or 0.0)) if body else 0.0
+            discount_reason_val = body.discount_reason if body else None
+            amount_due = max(0.0, total_fee - discount_val)
             enrollment = Enrollment(
                 tenant_id=student.tenant_id or actor.tenant_id,
                 student_id=student.id,
                 batch_id=batch.id,
                 course_id=course.id,
                 total_fee=total_fee,
-                amount_due=total_fee,
-                payment_status="Pending" if total_fee > 0 else "Paid",
+                discount=discount_val,
+                discount_reason=discount_reason_val,
+                amount_paid=0.0,
+                amount_due=amount_due,
+                payment_status="Pending" if amount_due > 0 else "Paid",
                 enrolled_by=_student_salesperson_id(student, session) or actor.id,
                 slip_number="ADM-" + "".join(random.choices(string.digits, k=6)),
                 notes=f"Enrolled from lead #{lead.id}",
@@ -17707,7 +17897,7 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
 # TRAINING INSTITUTE API ENDPOINTS
 # ============================================================
 
-from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource
+from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp
 
 # --- Create tables on startup (migration) ---
 def _create_institute_tables():
@@ -17715,7 +17905,7 @@ def _create_institute_tables():
     from database import engine
     inspector = inspect(engine)
     existing = inspector.get_table_names()
-    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource]
+    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp]
     from sqlmodel import SQLModel
     for model in tables_to_create:
         if model.__tablename__ not in existing:

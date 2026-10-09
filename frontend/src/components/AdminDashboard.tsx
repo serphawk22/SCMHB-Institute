@@ -139,6 +139,7 @@ function ManagementDonutCard({
   totalLabel,
   valueFormatter,
   emptyMessage,
+  href,
 }: {
   title: string;
   subtitle: string;
@@ -149,19 +150,31 @@ function ManagementDonutCard({
   totalLabel?: string;
   valueFormatter?: (v: number) => string;
   emptyMessage?: string;
+  href?: string;
 }) {
   const total = data?.reduce((acc, curr) => acc + (curr.value || 0), 0) || 0;
   const hasData = data && data.length > 0 && total > 0;
 
-  return (
-    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden flex flex-col h-[350px] transition-all hover:border-indigo-400/40">
+  const cardContent = (
+    <div className={cn(
+      "bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden flex flex-col h-[350px] transition-all",
+      href ? "hover:border-indigo-400 hover:shadow-md cursor-pointer group" : "hover:border-indigo-400/40"
+    )}>
       <div className="p-4 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
-        <h3 className="font-bold text-sm text-[var(--text-primary)] flex items-center gap-2">
+        <h3 className={cn(
+          "font-bold text-sm text-[var(--text-primary)] flex items-center gap-2",
+          href && "group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors"
+        )}>
           <Icon className={`w-4 h-4 ${iconColor}`} /> {title}
         </h3>
-        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md">
-          {subtitle}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md">
+            {subtitle}
+          </span>
+          {href && (
+            <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+          )}
+        </div>
       </div>
 
       <div className="p-4 flex-1 w-full h-full min-h-0 flex items-center">
@@ -241,6 +254,16 @@ function ManagementDonutCard({
       </div>
     </div>
   );
+
+  if (href) {
+    return (
+      <Link href={href} className="block no-underline">
+        {cardContent}
+      </Link>
+    );
+  }
+
+  return cardContent;
 }
 
 
@@ -548,6 +571,7 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
             subtitle="Funnel Breakdown"
             icon={Target}
             iconColor="text-indigo-500"
+            href="/leads"
             data={
               adminStats?.leadStagePie?.length
                 ? adminStats.leadStagePie
@@ -568,6 +592,7 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
             subtitle="Channel Share"
             icon={Globe}
             iconColor="text-pink-500"
+            href="/leads"
             data={
               adminStats?.leadSourcePie?.length
                 ? adminStats.leadSourcePie
@@ -589,6 +614,7 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
             subtitle="Program Popularity"
             icon={GraduationCap}
             iconColor="text-cyan-500"
+            href="/courses"
             data={
               adminStats?.coursePie?.length
                 ? adminStats.coursePie
@@ -610,6 +636,7 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
             subtitle="Collected vs Due"
             icon={DollarSign}
             iconColor="text-emerald-500"
+            href="/enrollments"
             data={
               adminStats?.revenueHealthPie?.length
                 ? adminStats.revenueHealthPie
@@ -629,6 +656,7 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
             subtitle="Lead Distribution"
             icon={UserCheck}
             iconColor="text-blue-500"
+            href="/teams"
             data={
               adminStats?.salesWorkload?.length
                 ? adminStats.salesWorkload.map((s: any) => ({ name: s.name, value: s.leads || 1 }))
@@ -648,6 +676,7 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
             subtitle="Daily Staff Delivery"
             icon={CheckCircle2}
             iconColor="text-amber-500"
+            href="/task-sheet"
             data={
               adminStats?.taskHealthPie?.length
                 ? adminStats.taskHealthPie

@@ -1151,6 +1151,20 @@ class LeadDemoSession(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
+class LeadFollowUp(SQLModel, table=True):
+    """A scheduled follow-up (call/message) for a lead"""
+    __tablename__ = "lead_follow_ups"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    lead_id: int = Field(foreign_key="leads.id", index=True)
+    scheduled_at: datetime = Field(index=True)
+    status: str = Field(default="Pending", max_length=30, index=True)  # Pending / Done / Cancelled
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class LeadNote(SQLModel, table=True):
     """Note attached to an individual lead, with author and timestamp"""
     __tablename__ = "lead_notes"

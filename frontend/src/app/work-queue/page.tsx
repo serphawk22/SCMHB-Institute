@@ -205,7 +205,7 @@ export default function WorkQueuePage() {
       : item.lead_id ? `/leads/${item.lead_id}`
       : item.student_id ? `/students/${item.student_id}`
       : type === "client" ? `/clients/${item.id}`
-      : type === "deal" ? "/pipeline"
+      : type === "deal" ? "/leads"
       : type === "contact" ? "/contacts"
       : type === "meeting" ? "/meetings"
       : type === "call" ? "/calls"

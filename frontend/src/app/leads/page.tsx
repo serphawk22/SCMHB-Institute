@@ -2,7 +2,7 @@
 import { API_BASE_URL } from "@/config";
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Filter, MoreVertical, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ChevronDown, ArrowUpRight, Clock, Zap, Edit2, Trash2, Tag, GraduationCap } from "lucide-react";
+import { Search, Plus, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ArrowUpRight, Clock, Edit2, Trash2, Tag, GraduationCap, CalendarClock, Video, PhoneCall, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ViewSwitcher, ViewType } from "@/components/ViewSwitcher";
@@ -11,6 +11,7 @@ import LeadBatchEnrollmentAction from "@/components/LeadBatchEnrollmentAction";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useLanguage } from "@/context/LanguageContext";
 import SalesAssignModal from "@/components/SalesAssignModal";
+import LeadScheduleModal, { ScheduleType, SchedulePayload } from "@/components/LeadScheduleModal";
 
 interface Lead {
   id: number;
@@ -32,34 +33,68 @@ interface Lead {
   converted_student_id?: number | null;
   notes?: string | null;
   created_at: string;
+  owner_id?: number | null;
+  owner_name?: string | null;
+  next_followup_at?: string | null;
+  next_demo_at?: string | null;
 }
 
 interface CourseOption { id: number; title: string; category?: string | null; duration_hours?: number | null; duration_weeks?: number | null; }
 
-interface ActivityLogEntry {
-  id: number;
-  action: string;
-  method: string;
-  content: string;
-  details?: string;
-  leadId: number;
-  createdAt: string;
+const SOURCES = ["Walk-in", "Referral", "WhatsApp", "Instagram", "Facebook", "Website", "Phone Call", "Event", "Other"];
+
+const STAGES = ["New", "Contacted", "Not Responded", "Follow-up", "Demo", "Converted", "Lost"] as const;
+type Stage = typeof STAGES[number];
+
+const STAGE_STYLE: Record<Stage, { chip: string; dot: string; column: string; ring: string }> = {
+  New: { chip: "bg-blue-500/10 text-blue-700 border-blue-500/30 dark:text-blue-300", dot: "bg-blue-500", column: "from-blue-500/10", ring: "ring-blue-500" },
+  Contacted: { chip: "bg-violet-500/10 text-violet-700 border-violet-500/30 dark:text-violet-300", dot: "bg-violet-500", column: "from-violet-500/10", ring: "ring-violet-500" },
+  "Not Responded": { chip: "bg-slate-500/10 text-slate-700 border-slate-500/30 dark:text-slate-300", dot: "bg-slate-400", column: "from-slate-500/10", ring: "ring-slate-400" },
+  "Follow-up": { chip: "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300", dot: "bg-amber-500", column: "from-amber-500/10", ring: "ring-amber-500" },
+  Demo: { chip: "bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300", dot: "bg-fuchsia-500", column: "from-fuchsia-500/10", ring: "ring-fuchsia-500" },
+  Converted: { chip: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-300", dot: "bg-emerald-500", column: "from-emerald-500/10", ring: "ring-emerald-500" },
+  Lost: { chip: "bg-red-500/10 text-red-600 border-red-500/30 dark:text-red-300", dot: "bg-red-500", column: "from-red-500/10", ring: "ring-red-500" },
+};
+
+/** Normalises current and legacy statuses to one of the seven stages. */
+function stageOf(lead: Pick<Lead, "status" | "is_converted" | "converted_student_id">): Stage {
+  if (lead.converted_student_id || lead.is_converted) return "Converted";
+  const s = lead.status || "New";
+  if ((STAGES as readonly string[]).includes(s)) return s as Stage;
+  const legacy: Record<string, Stage> = {
+    Qualified: "Contacted", Interested: "Contacted", "Demo Scheduled": "Demo", "Demo Completed": "Demo",
+    "Proposal Sent": "Follow-up", Negotiation: "Follow-up", "Follow Up": "Follow-up", Won: "Converted", Enrolled: "Converted",
+  };
+  return legacy[s] || "New";
 }
 
-const SOURCES = ["Walk-in", "Referral", "WhatsApp", "Instagram", "Facebook", "Website", "Phone Call", "Event", "Other"];
-const STATUSES = ["New", "Contacted", "Qualified", "Interested", "Demo Scheduled", "Proposal Sent", "Negotiation", "Follow-up", "Won", "Enrolled", "Lost"];
+function fmtWhen(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+}
 
-const STATUS_STYLE: Record<string, string> = {
-  New: "bg-blue-500/10 text-blue-600 border-blue-500/20",
-  Contacted: "bg-violet-500/10 text-violet-600 border-violet-500/20",
-  Qualified: "bg-amber-500/10 text-amber-600 border-amber-500/20",
-  "Proposal Sent": "bg-orange-500/10 text-orange-600 border-orange-500/20",
-  Negotiation: "bg-indigo-500/10 text-indigo-600 border-indigo-500/20",
-  Won: "bg-emerald-500/10 text-emerald-600 border-emerald-500/20",
-  Lost: "bg-red-500/10 text-red-500 border-red-500/20",
-  Converted: "bg-green-500/10 text-green-700 border-green-500/20",
-  Enrolled: "bg-emerald-500/10 text-emerald-700 border-emerald-500/20",
-};
+/** Earliest upcoming scheduled item (follow-up or demo) for a lead. */
+function nextScheduled(lead: Lead): { type: ScheduleType; at: string } | null {
+  const items: { type: ScheduleType; at: string }[] = [];
+  if (lead.next_followup_at) items.push({ type: "followup", at: lead.next_followup_at });
+  if (lead.next_demo_at) items.push({ type: "demo", at: lead.next_demo_at });
+  items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  return items[0] || null;
+}
+
+function ScheduleChip({ lead }: { lead: Lead }) {
+  const next = nextScheduled(lead);
+  if (!next) return <span className="text-slate-400 text-[12px]">—</span>;
+  const overdue = new Date(next.at).getTime() < Date.now();
+  const Icon = next.type === "demo" ? Video : PhoneCall;
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold border ${overdue ? "bg-red-500/10 text-red-600 border-red-500/30" : next.type === "demo" ? "bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300" : "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300"}`}>
+      <Icon className="w-3 h-3" /> {fmtWhen(next.at)}
+    </span>
+  );
+}
 
 const emptyForm = {
   company_name: "", website: "", industry: "", course_interest_id: "", gpa: "", education_level: "", academic_background: "", career_goal: "", email: "",
@@ -89,7 +124,12 @@ export default function LeadsPage() {
   const [form, setForm] = useState({ ...emptyForm });
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [currentView, setCurrentView] = useState<ViewType>('list');
-  const [activities, setActivities] = useState<ActivityLogEntry[]>([]);
+  const [schedule, setSchedule] = useState<{ lead: Lead; type: ScheduleType } | null>(null);
+  const [enrollLead, setEnrollLead] = useState<Lead | null>(null);
+  const [salesPeople, setSalesPeople] = useState<{ id: number; name: string }[]>([]);
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<Stage | null>(null);
+  const isAdmin = role === "Admin" || (role as string) === "SuperAdmin";
   const [sortOption, setSortOption] = useState<"recent" | "name">("recent");
   const [noteLead, setNoteLead] = useState<Lead | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -97,7 +137,15 @@ export default function LeadsPage() {
   const [showSalesAssign, setShowSalesAssign] = useState(false);
   const [pendingLeadForm, setPendingLeadForm] = useState<any>(null);
 
-  useEffect(() => { fetchLeads(); fetchActivities(); }, []);
+  useEffect(() => { fetchLeads(); }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    fetch(`${API_BASE_URL}/employees/workload`)
+      .then(r => r.ok ? r.json() : Promise.reject(new Error("Sales team unavailable")))
+      .then(d => setSalesPeople((d.employees || d || []).map((e: any) => ({ id: e.id, name: e.name || e.email }))))
+      .catch(e => console.warn("Could not load sales team", e));
+  }, [isAdmin]);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/courses`)
@@ -114,23 +162,8 @@ export default function LeadsPage() {
     }
   }, []);
 
-  const fetchActivities = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE_URL}/activities`, {
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setActivities((data.activities || []).filter((a: any) => a.lead_id));
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const fetchLeads = async () => {
-    setLoading(true);
+  const fetchLeads = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const url = new URL(`${API_BASE_URL}/leads`);
       if ((role === 'SalesManager' || role === 'Employee') && user?.id) {
@@ -150,8 +183,7 @@ export default function LeadsPage() {
         || (l.email || "").toLowerCase().includes(q)
         || (l.industry || "").toLowerCase().includes(q)
         || (l.source || "").toLowerCase().includes(q);
-      const matchStatus = statusFilter === "All"
-        || (statusFilter === "Converted" ? l.is_converted : l.status === statusFilter);
+      const matchStatus = statusFilter === "All" || stageOf(l) === statusFilter;
       return matchSearch && matchStatus;
     });
 
@@ -163,6 +195,81 @@ export default function LeadsPage() {
 
     return result;
   }, [leads, searchQuery, statusFilter, sortOption]);
+
+  const stageCounts = useMemo(() => {
+    const counts = Object.fromEntries(STAGES.map(s => [s, 0])) as Record<Stage, number>;
+    leads.forEach(l => { counts[stageOf(l)] += 1; });
+    return counts;
+  }, [leads]);
+
+  const apiError = async (res: Response, fallback: string) => {
+    const d = await res.json().catch(() => null);
+    return typeof d?.detail === "string" ? d.detail : fallback;
+  };
+
+  /** Single entry point for moving a lead to a stage (dropdown and drag & drop). */
+  const changeStage = async (lead: Lead, target: Stage) => {
+    const current = stageOf(lead);
+    if (current === target) return;
+    if (current === "Converted") {
+      alert("This lead is already enrolled as a student, so it stays in Converted.");
+      return;
+    }
+    if (target === "Follow-up" || target === "Demo") {
+      setSchedule({ lead, type: target === "Demo" ? "demo" : "followup" });
+      return;
+    }
+    if (target === "Converted") {
+      setEnrollLead(lead);
+      return;
+    }
+    const previous = leads;
+    setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, status: target } : l));
+    try {
+      const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/status`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: target }),
+      });
+      if (!res.ok) throw new Error(await apiError(res, "Could not update the stage."));
+      fetchLeads(true);
+    } catch (e) {
+      setLeads(previous);
+      alert(e instanceof Error ? e.message : "Could not update the stage.");
+    }
+  };
+
+  const assignOwner = async (lead: Lead, value: string) => {
+    const employeeId = Number(value);
+    if (!employeeId) return;
+    const person = salesPeople.find(p => p.id === employeeId);
+    const previous = leads;
+    setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, owner_id: employeeId, owner_name: person?.name || l.owner_name } : l));
+    try {
+      const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/assign-employee`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ employee_id: employeeId }),
+      });
+      if (!res.ok) throw new Error(await apiError(res, "Could not assign the sales person."));
+    } catch (e) {
+      setLeads(previous);
+      alert(e instanceof Error ? e.message : "Could not assign the sales person.");
+    }
+  };
+
+  const submitSchedule = async (p: SchedulePayload) => {
+    if (!schedule) return;
+    const { lead, type } = schedule;
+    const isDemo = type === "demo";
+    const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/${isDemo ? "demo-sessions" : "follow-ups"}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(isDemo
+        ? { scheduled_at: p.scheduled_at, meeting_url: p.meeting_url || null, notes: p.notes || null }
+        : { scheduled_at: p.scheduled_at, notes: p.notes || null }),
+    });
+    if (!res.ok) throw new Error(await apiError(res, "Could not save the schedule."));
+    setSchedule(null);
+    await fetchLeads(true);
+  };
 
   const openCreate = () => {
     setEditLead(null);
@@ -266,7 +373,6 @@ export default function LeadsPage() {
       setNoteLead(null);
       setNoteText("");
       fetchLeads();
-      fetchActivities();
     } catch {
       alert(t("leads.network_error_note"));
     } finally {
@@ -276,9 +382,9 @@ export default function LeadsPage() {
 
   const stats = [
     { label: t("leads.total_leads"), value: leads.length, color: "text-blue-600", bg: "bg-blue-500/10" },
-    { label: t("leads.new"), value: leads.filter(l => l.status === "New").length, color: "text-violet-600", bg: "bg-violet-500/10" },
-    { label: t("leads.qualified"), value: leads.filter(l => l.status === "Qualified").length, color: "text-amber-600", bg: "bg-amber-500/10" },
-    { label: t("leads.converted"), value: leads.filter(l => l.is_converted).length, color: "text-emerald-600", bg: "bg-emerald-500/10" },
+    { label: t("leads.new"), value: stageCounts.New, color: "text-violet-600", bg: "bg-violet-500/10" },
+    { label: "Follow-ups & Demos", value: stageCounts["Follow-up"] + stageCounts.Demo, color: "text-amber-600", bg: "bg-amber-500/10" },
+    { label: t("leads.converted"), value: stageCounts.Converted, color: "text-emerald-600", bg: "bg-emerald-500/10" },
   ];
 
   return (
@@ -368,11 +474,12 @@ export default function LeadsPage() {
             <option value="name">{t("leads.sort_name")}</option>
           </select>
 
-          {["All", ...STATUSES, "Converted"].map(s => {
-            const count = s === "All" ? leads.length : (s === "Converted" ? leads.filter(l => l.is_converted).length : leads.filter(l => l.status === s).length);
+          {(["All", ...STAGES] as string[]).map(s => {
+            const count = s === "All" ? leads.length : stageCounts[s as Stage];
             return (
               <button key={s} onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${statusFilter === s ? "bg-blue-600 dark:bg-white text-white dark:text-black shadow-sm" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"}`}>
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${statusFilter === s ? "bg-blue-600 dark:bg-white text-white dark:text-black shadow-sm" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"}`}>
+                {s !== "All" && <span className={`w-1.5 h-1.5 rounded-full ${STAGE_STYLE[s as Stage].dot}`} />}
                 {s} ({count})
               </button>
             );
@@ -382,7 +489,7 @@ export default function LeadsPage() {
 
       <div className="flex flex-1 overflow-hidden">
       {/* Table */}
-      <div className="flex-1 overflow-auto bg-white dark:bg-black">
+      <div className="flex-1 min-w-0 overflow-auto bg-white dark:bg-black">
         {loading ? (
           <div className="flex items-center justify-center h-64">
             <Loader2 className="animate-spin w-8 h-8 text-blue-600" />
@@ -399,25 +506,51 @@ export default function LeadsPage() {
             </button>
           </div>
         ) : currentView === 'kanban' ? (
-          <div className="flex gap-4 p-6 overflow-x-auto h-full items-start">
-            {STATUSES.map(status => {
-              const colLeads = filtered.filter(l => l.status === status);
+          <div className="flex gap-3 p-4 overflow-x-auto h-full items-stretch">
+            {STAGES.map(stage => {
+              const colLeads = filtered.filter(l => stageOf(l) === stage);
+              const isOver = dragOver === stage;
+              const style = STAGE_STYLE[stage];
               return (
-                <div key={status} className="w-80 shrink-0 flex flex-col bg-slate-50 dark:bg-[#111111] border border-slate-200 dark:border-[#222222] rounded-2xl max-h-full">
-                  <div className="p-4 font-bold text-slate-800 dark:text-white flex items-center justify-between border-b border-slate-200 dark:border-[#222222]">
-                    <span>{status}</span>
-                    <span className="px-2.5 py-1 rounded-full bg-slate-200 dark:bg-[#222222] text-xs text-slate-600 dark:text-[#a3a3a3]">{colLeads.length}</span>
+                <div key={stage}
+                  onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (dragOver !== stage) setDragOver(stage); }}
+                  onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(null); }}
+                  onDrop={e => {
+                    e.preventDefault();
+                    const id = Number(e.dataTransfer.getData("text/plain")) || dragId;
+                    setDragOver(null); setDragId(null);
+                    const lead = leads.find(l => l.id === id);
+                    if (lead) changeStage(lead, stage);
+                  }}
+                  className={`flex-1 min-w-[250px] flex flex-col rounded-2xl border bg-gradient-to-b ${style.column} to-slate-50 dark:to-[#0d0d0d] transition-all ${isOver ? `ring-2 ${style.ring} border-transparent scale-[1.01]` : "border-slate-200 dark:border-[#222222]"}`}>
+                  <div className="p-3.5 font-bold text-slate-800 dark:text-white flex items-center justify-between border-b border-slate-200/70 dark:border-[#222222]">
+                    <span className="flex items-center gap-2 text-sm"><span className={`w-2.5 h-2.5 rounded-full ${style.dot}`} />{stage}</span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-white/80 dark:bg-[#222222] text-xs text-slate-600 dark:text-[#a3a3a3]">{colLeads.length}</span>
                   </div>
-                  <div className="p-3 flex-1 overflow-y-auto space-y-3 min-h-[200px]">
+                  <div className="p-2.5 flex-1 overflow-y-auto space-y-2.5 min-h-[160px]">
                     {colLeads.map(lead => (
-                      <motion.div key={lead.id} layoutId={`lead-${lead.id}`} onClick={() => router.push(`/leads/${lead.id}`)}
-                        className="p-4 bg-white dark:bg-[#000000] rounded-xl shadow-sm border border-slate-200 dark:border-[#222222] cursor-pointer hover:border-blue-500 dark:hover:border-white transition-colors group">
-                        <div className="font-semibold text-slate-900 dark:text-white text-sm">{lead.company_name}</div>
-                        <div className="text-[12px] text-slate-500 mt-1 line-clamp-1">{lead.industry || 'No industry'}</div>
-                        {lead.email && <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-1"><Mail className="w-3 h-3"/>{lead.email}</div>}
-                      </motion.div>
+                      <div key={lead.id}
+                        draggable={stage !== "Converted"}
+                        onDragStart={e => { e.dataTransfer.setData("text/plain", String(lead.id)); e.dataTransfer.effectAllowed = "move"; setDragId(lead.id); }}
+                        onDragEnd={() => { setDragId(null); setDragOver(null); }}
+                        onClick={() => router.push(`/leads/${lead.id}`)}
+                        className={`p-3.5 bg-white dark:bg-black rounded-xl shadow-sm border border-slate-200 dark:border-[#222222] hover:border-blue-500 dark:hover:border-white hover:shadow-md transition-all group ${stage === "Converted" ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"} ${dragId === lead.id ? "opacity-40" : ""}`}>
+                        <div className="font-semibold text-slate-900 dark:text-white text-sm truncate">{lead.company_name}</div>
+                        <div className="text-[12px] text-slate-500 mt-0.5 truncate">{lead.course_interest_title || lead.industry || "No course selected"}</div>
+                        <div className="mt-2 space-y-1">
+                          {lead.phone && <div className="text-[11px] text-slate-400 flex items-center gap-1"><Phone className="w-3 h-3" />{lead.phone}</div>}
+                          {lead.email && <div className="text-[11px] text-slate-400 flex items-center gap-1 truncate"><Mail className="w-3 h-3 shrink-0" /><span className="truncate">{lead.email}</span></div>}
+                        </div>
+                        <div className="mt-3 flex items-center justify-between gap-2">
+                          <ScheduleChip lead={lead} />
+                          <span title={lead.owner_name ? `Sales: ${lead.owner_name}` : "Unassigned"}
+                            className={`inline-flex items-center gap-1 text-[11px] font-medium max-w-[110px] truncate ${lead.owner_name ? "text-slate-600 dark:text-slate-300" : "text-slate-400 italic"}`}>
+                            <UserRound className="w-3 h-3 shrink-0" /><span className="truncate">{lead.owner_name || "Unassigned"}</span>
+                          </span>
+                        </div>
+                      </div>
                     ))}
-                    {colLeads.length === 0 && <div className="p-4 text-center text-sm text-slate-400 border-2 border-dashed border-slate-200 dark:border-[#222222] rounded-xl">{t("leads.no_leads")}</div>}
+                    {colLeads.length === 0 && <div className={`p-4 text-center text-xs text-slate-400 border-2 border-dashed rounded-xl ${isOver ? "border-blue-400 text-blue-500" : "border-slate-200 dark:border-[#222222]"}`}>{isOver ? "Drop here" : t("leads.no_leads")}</div>}
                   </div>
                 </div>
               )
@@ -428,7 +561,7 @@ export default function LeadsPage() {
             <div className="bg-white dark:bg-[#111111] p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-[#222222] h-[500px]">
               <h3 className="text-lg font-bold mb-6 text-slate-900 dark:text-white">{t("leads.leads_by_status")}</h3>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={STATUSES.map(s => ({ name: s, count: filtered.filter(l => l.status === s).length }))} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                <BarChart data={STAGES.map(s => ({ name: s, count: filtered.filter(l => stageOf(l) === s).length }))} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#222" vertical={false} />
                   <XAxis dataKey="name" stroke="#888" fontSize={12} tickLine={false} axisLine={false} />
                   <YAxis stroke="#888" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
@@ -444,7 +577,7 @@ export default function LeadsPage() {
               <thead>
                 <tr className="bg-slate-50 dark:bg-[#000000] border-b border-slate-200 dark:border-[#222222] text-xs uppercase tracking-wider text-slate-500 dark:text-[#a3a3a3]">
                   <th className="p-4 font-semibold">{t("leads.industry_status2")}</th>
-                  {STATUSES.map(s => <th key={s} className="p-4 font-semibold text-center">{s}</th>)}
+                  {STAGES.map(s => <th key={s} className="p-4 font-semibold text-center">{s}</th>)}
                   <th className="p-4 font-bold text-center border-l border-slate-200 dark:border-[#222222]">{t("leads.total_leads")}</th>
                 </tr>
               </thead>
@@ -454,7 +587,7 @@ export default function LeadsPage() {
                   return (
                     <tr key={ind} className="hover:bg-slate-50 dark:hover:bg-[#0a0a0a]">
                       <td className="p-4 font-medium text-slate-900 dark:text-white">{ind}</td>
-                      {STATUSES.map(s => <td key={s} className="p-4 text-center text-slate-600 dark:text-[#a3a3a3]">{indLeads.filter(l => l.status === s).length || '-'}</td>)}
+                      {STAGES.map(s => <td key={s} className="p-4 text-center text-slate-600 dark:text-[#a3a3a3]">{indLeads.filter(l => stageOf(l) === s).length || '-'}</td>)}
                       <td className="p-4 text-center font-bold text-slate-900 dark:text-white border-l border-slate-200 dark:border-[#222222]">{indLeads.length}</td>
                     </tr>
                   )
@@ -464,28 +597,28 @@ export default function LeadsPage() {
           </div>
         ) : (
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 text-[13px] font-semibold text-slate-500 dark:text-slate-400">
-                <th className="px-6 py-4 font-medium">Student</th>
-                <th className="px-6 py-4 font-medium">Course</th>
-                <th className="px-6 py-4 font-medium">Contact</th>
-                <th className="px-6 py-4 font-medium">Source</th>
-                <th className="px-6 py-4 font-medium">Status</th>
-                <th className="px-6 py-4 font-medium text-right">Actions</th>
+            <thead className="sticky top-0 z-10">
+              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-[12px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400">
+                <th className="px-5 py-3 font-semibold">Student</th>
+                <th className="px-5 py-3 font-semibold">Course</th>
+                <th className="px-5 py-3 font-semibold">Contact</th>
+                <th className="px-5 py-3 font-semibold">Source</th>
+                <th className="px-5 py-3 font-semibold">Sales person</th>
+                <th className="px-5 py-3 font-semibold">Stage</th>
+                <th className="px-5 py-3 font-semibold">Scheduled</th>
+                <th className="px-5 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
-              <AnimatePresence>
-                {filtered.map((lead, idx) => (
-                  <motion.tr
+                {filtered.map(lead => {
+                  const stage = stageOf(lead);
+                  return (
+                  <tr
                     key={lead.id}
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.03 }}
                     onClick={() => router.push(`/leads/${lead.id}`)}
                     className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors"
                   >
-                    <td className="px-6 py-4">
+                    <td className="px-5 py-3">
                       <div className="flex flex-col">
                         <span className="font-semibold text-slate-900 dark:text-white text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors flex items-center gap-1">
                           {lead.company_name}
@@ -504,26 +637,50 @@ export default function LeadsPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-[13px] text-slate-600 dark:text-slate-300">{lead.course_interest_title || lead.industry || "—"}</td>
-                    <td className="px-6 py-4">
+                    <td className="px-5 py-3 text-[13px] text-slate-600 dark:text-slate-300">{lead.course_interest_title || lead.industry || "—"}</td>
+                    <td className="px-5 py-3">
                       <div className="flex flex-col gap-0.5">
                         {lead.email && <div className="flex items-center gap-1 text-[12px] text-slate-500"><Mail className="w-3 h-3" /><span className="truncate max-w-[160px]">{lead.email}</span></div>}
                         {lead.phone && <div className="flex items-center gap-1 text-[12px] text-slate-500"><Phone className="w-3 h-3" /><span>{lead.phone}</span></div>}
                         {!lead.email && !lead.phone && <span className="text-slate-400 text-[12px]">—</span>}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-5 py-3">
                       <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                         {lead.source || "Unknown"}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex items-center px-2 py-1 rounded-md text-[11px] font-bold uppercase tracking-wide border ${STATUS_STYLE[lead.converted_student_id ? "Enrolled" : lead.is_converted ? "Converted" : lead.status] || STATUS_STYLE.New}`}>
-                        {lead.converted_student_id ? "Enrolled" : lead.is_converted ? "Converted" : lead.status}
-                      </span>
+                    <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                      {isAdmin ? (
+                        <select
+                          aria-label={`Assign sales person for ${lead.company_name}`}
+                          value={lead.owner_id ? String(lead.owner_id) : ""}
+                          onChange={e => assignOwner(lead, e.target.value)}
+                          className="w-full min-w-[140px] max-w-[190px] px-2.5 py-1.5 rounded-lg text-[13px] font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 cursor-pointer"
+                        >
+                          <option value="" disabled>Unassigned</option>
+                          {lead.owner_id && !salesPeople.some(p => p.id === lead.owner_id) && (
+                            <option value={lead.owner_id}>{lead.owner_name || `User #${lead.owner_id}`}</option>
+                          )}
+                          {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-[13px] text-slate-600 dark:text-slate-300"><UserRound className="w-3.5 h-3.5 text-slate-400" />{lead.owner_name || "Unassigned"}</span>
+                      )}
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                      <select
+                        aria-label={`Stage for ${lead.company_name}`}
+                        value={stage}
+                        onChange={e => changeStage(lead, e.target.value as Stage)}
+                        className={`px-2.5 py-1.5 rounded-lg text-[12px] font-bold border cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/30 ${STAGE_STYLE[stage].chip}`}
+                      >
+                        {STAGES.map(s => <option key={s} value={s} className="text-slate-900 bg-white">{s}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-5 py-3"><ScheduleChip lead={lead} /></td>
+                    <td className="px-5 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
                         {lead.converted_student_id ? (
                           <button
                             onClick={e => { e.stopPropagation(); router.push(`/students/${lead.converted_student_id}`); }}
@@ -552,42 +709,14 @@ export default function LeadsPage() {
                         </button>
                       </div>
                     </td>
-                  </motion.tr>
-                ))}
-              </AnimatePresence>
+                  </tr>
+                  );
+                })}
             </tbody>
           </table>
         )}
       </div>
 
-      {/* Activity Sidebar */}
-      <motion.div
-        initial="hidden" animate="show"
-        className="w-full xl:w-[400px] shrink-0 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-black flex flex-col h-full overflow-hidden"
-      >
-        <div className="p-6 border-b border-slate-200 dark:border-slate-800 flex items-center gap-3 shrink-0">
-          <div className="p-2 bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-xl"><Zap className="w-5 h-5" /></div>
-          <h3 className="text-lg font-bold text-slate-800 dark:text-white">{t("leads.recent_activity")}</h3>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {activities.length === 0 ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-8">{t("leads.no_activity_yet")}</p>
-          ) : (
-            activities.map(act => (
-              <Link href={act.leadId ? `/leads/${act.leadId}` : '#'} key={act.id} className="block p-4 bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 transition-colors group">
-                <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-bold px-2 py-1 bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 rounded-lg">{act.action}</span>
-                  <span className="text-[10px] text-slate-400 font-medium">{new Date(act.createdAt).toLocaleDateString()}</span>
-                </div>
-                <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors line-clamp-2">{act.content}</p>
-                {act.details && (
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 line-clamp-1">{act.details}</p>
-                )}
-              </Link>
-            ))
-          )}
-        </div>
-      </motion.div>
       </div>
 
       {/* ADD / EDIT MODAL */}
@@ -698,13 +827,15 @@ export default function LeadsPage() {
                     <input value={form.website} onChange={e => setForm(f => ({ ...f, website: e.target.value }))} placeholder="https://example.com"
                       className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all" />
                   </div>
-                  <div>
-                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">{t("leads.status")}</label>
-                    <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
-                      className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
-                      {STATUSES.map(s => <option key={s}>{s}</option>)}
-                    </select>
-                  </div>
+                  {!editLead && (
+                    <div>
+                      <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">{t("leads.status")}</label>
+                      <select value={form.status} onChange={e => setForm(f => ({ ...f, status: e.target.value }))}
+                        className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                        {["New", "Contacted", "Not Responded"].map(s => <option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -797,6 +928,33 @@ export default function LeadsPage() {
         onAssign={doCreateLead}
         entityType="lead"
       />
+
+      {/* Schedule follow-up / demo (asked when a lead moves to Follow-up or Demo) */}
+      <AnimatePresence>
+        {schedule && (
+          <LeadScheduleModal
+            key={`${schedule.lead.id}-${schedule.type}`}
+            type={schedule.type}
+            leadName={schedule.lead.company_name}
+            onClose={() => setSchedule(null)}
+            onSubmit={submitSchedule}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Enrollment modal (opened when a lead moves to Converted) */}
+      {enrollLead && (
+        <LeadBatchEnrollmentAction
+          key={enrollLead.id}
+          leadId={enrollLead.id}
+          leadName={enrollLead.company_name}
+          leadPhone={enrollLead.phone}
+          hideTrigger
+          externalOpen
+          onEnrolled={() => fetchLeads(true)}
+          onExternalClose={() => setEnrollLead(null)}
+        />
+      )}
     </div>
   );
 }
