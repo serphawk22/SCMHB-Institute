@@ -54,8 +54,8 @@ export default function BatchesPage() {
   const fillRate = (b: Batch) => b.max_seats > 0 ? Math.round((b.enrolled_count / b.max_seats) * 100) : 0;
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
+    <div className="institute-ops-page space-y-8">
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <h1 className="text-3xl font-bold text-white flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center"><Layers className="w-5 h-5 text-white" /></div>
@@ -63,7 +63,7 @@ export default function BatchesPage() {
           </h1>
           <p className="text-zinc-400 mt-1">Manage course batches and schedules</p>
         </div>
-        <button onClick={openCreate} className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-semibold hover:opacity-90 transition shadow-lg shadow-blue-500/20">
+        <button onClick={openCreate} className="flex items-center gap-2 whitespace-nowrap px-5 py-2.5 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 text-white font-semibold hover:opacity-90 transition shadow-lg shadow-blue-500/20">
           <Plus className="w-4 h-4" /> Create Batch
         </button>
       </div>
@@ -79,7 +79,7 @@ export default function BatchesPage() {
 
       <div className="flex flex-wrap gap-3 items-center">
         <div className="relative flex-1 min-w-[200px]"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" /><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search batches or courses..." className="w-full pl-10 pr-4 py-2.5 bg-white/5 border border-white/10 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-blue-500" /></div>
-        <div className="flex gap-2">{["All","Upcoming","Active","Completed","Cancelled"].map(st=><button key={st} onClick={()=>setFilterStatus(st)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${filterStatus===st?"bg-blue-600 text-white":"bg-white/5 text-zinc-400 hover:text-white border border-white/10"}`}>{st}</button>)}</div>
+        <div className="flex flex-wrap gap-2">{["All","Upcoming","Active","Completed","Cancelled"].map(st=><button key={st} onClick={()=>setFilterStatus(st)} className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${filterStatus===st?"bg-blue-600 text-white":"bg-white/5 text-zinc-400 hover:text-white border border-white/10"}`}>{st}</button>)}</div>
       </div>
 
       {loading ? <div className="flex items-center justify-center h-64"><Loader2 className="w-8 h-8 animate-spin text-blue-400" /></div> : (

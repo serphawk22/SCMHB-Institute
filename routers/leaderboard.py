@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 from typing import List
 from pydantic import BaseModel
-from database import engine, User, Deal, ConversationLog, Lead, ClientProfile, ProjectTicket
+from database import engine, User, Deal, ConversationLog, Lead, LeadDemoSession, Student, Enrollment, ClientProfile, ProjectTicket
 from modules.api_tracker import current_salesperson_id
 
 router = APIRouter(prefix="/leaderboard", tags=["Leaderboard"])
@@ -24,10 +24,17 @@ class LeaderboardEntry(BaseModel):
     tickets_assigned: int = 0
     tickets_in_production: int = 0
     tickets_completed: int = 0
+    leads_assigned: int = 0
+    students_converted: int = 0
+    demos_held: int = 0
+    demos_scheduled: int = 0
+    total_business: float = 0.0
+    advance_collected: float = 0.0
+    amount_due: float = 0.0
 
 @router.get("", response_model=List[LeaderboardEntry])
 def get_leaderboard(kind: str = "all", session: Session = Depends(get_session)):
-    roles = ["Employee", "SalesManager"] if kind == "sales" else ["ProjectMember", "Intern"] if kind == "tickets" else ["Employee", "SalesManager", "ProjectMember", "Intern"]
+    roles = ["Employee", "SalesManager"] if kind in ("sales", "institute") else ["ProjectMember", "Intern"] if kind == "tickets" else ["Employee", "SalesManager", "ProjectMember", "Intern"]
     query = select(User).where(User.role.in_(roles))
     requester_id = current_salesperson_id.get()
     if requester_id:
@@ -35,6 +42,66 @@ def get_leaderboard(kind: str = "all", session: Session = Depends(get_session)):
         if requester and requester.tenant_id:
             query = query.where(User.tenant_id == requester.tenant_id)
     users = session.exec(query).all()
+
+    if kind == "institute":
+        leads = session.exec(select(Lead)).all()
+        leads_by_id = {lead.id: lead for lead in leads}
+        leads_by_owner = {user.id: [] for user in users}
+        for lead in leads:
+            if lead.owner_id in leads_by_owner:
+                leads_by_owner[lead.owner_id].append(lead)
+
+        students_by_id = {student.id: student for student in session.exec(select(Student)).all()}
+        demos_by_lead = {}
+        for demo in session.exec(select(LeadDemoSession)).all():
+            demos_by_lead.setdefault(demo.lead_id, []).append(demo)
+
+        metrics = {
+            user.id: {
+                "total_business": 0.0,
+                "advance_collected": 0.0,
+                "amount_due": 0.0,
+            }
+            for user in users
+        }
+        for enrollment in session.exec(select(Enrollment)).all():
+            student = students_by_id.get(enrollment.student_id)
+            lead = leads_by_id.get(student.lead_id) if student and student.lead_id else None
+            owner_id = (student.assigned_salesperson_id if student else None) or (lead.owner_id if lead else None) or enrollment.enrolled_by
+            if owner_id not in metrics:
+                continue
+            amount_paid = enrollment.amount_paid or 0
+            amount_due = enrollment.amount_due or 0
+            metrics[owner_id]["advance_collected"] += amount_paid
+            metrics[owner_id]["amount_due"] += amount_due
+            metrics[owner_id]["total_business"] += amount_paid + amount_due
+
+        leaderboard = []
+        for user in users:
+            assigned_leads = leads_by_owner.get(user.id, [])
+            lead_ids = {lead.id for lead in assigned_leads}
+            demos = [demo for lead_id in lead_ids for demo in demos_by_lead.get(lead_id, [])]
+            converted_student_ids = {lead.converted_student_id for lead in assigned_leads if lead.converted_student_id is not None}
+            user_metrics = metrics[user.id]
+            leaderboard.append(LeaderboardEntry(
+                user_id=user.id,
+                name=user.name or user.email.split("@")[0],
+                role=user.role,
+                deals_closed=0,
+                revenue_closed=user_metrics["advance_collected"],
+                meetings_booked=0,
+                calls_made=0,
+                leads_managed=len(assigned_leads),
+                leads_assigned=len(assigned_leads),
+                students_converted=len(converted_student_ids),
+                demos_held=sum(1 for demo in demos if demo.status == "Attended"),
+                demos_scheduled=sum(1 for demo in demos if demo.status == "Scheduled"),
+                total_business=user_metrics["total_business"],
+                advance_collected=user_metrics["advance_collected"],
+                amount_due=user_metrics["amount_due"],
+            ))
+        leaderboard.sort(key=lambda entry: (entry.total_business, entry.advance_collected, entry.students_converted), reverse=True)
+        return leaderboard
     
     leaderboard = []
     

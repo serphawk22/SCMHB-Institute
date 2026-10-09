@@ -137,6 +137,73 @@ select option {
   transform: translateY(-2px);
 }
 
+.institute-ops-page {
+  color: var(--text-primary);
+}
+
+.institute-ops-page .glass-card {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+  border-radius: 8px !important;
+  box-shadow: var(--shadow-sm);
+}
+
+.institute-ops-page [class*="bg-zinc-900"] {
+  background: var(--surface) !important;
+}
+
+.institute-ops-page [class*="bg-white/"] {
+  background: color-mix(in srgb, var(--surface) 88%, transparent) !important;
+}
+
+.institute-ops-page [class*="border-white/"] {
+  border-color: var(--border) !important;
+}
+
+.institute-ops-page :is(.text-white, .text-zinc-100, .text-zinc-200, .text-zinc-300) {
+  color: var(--text-primary) !important;
+}
+
+.institute-ops-page :is(.text-zinc-400, .text-zinc-500, .text-zinc-600) {
+  color: var(--text-secondary) !important;
+}
+
+.institute-ops-page :is(input, select, textarea) {
+  color: var(--text-primary) !important;
+  background: var(--background) !important;
+  border-color: var(--border) !important;
+  border-radius: 6px;
+}
+
+.institute-ops-page :is(input, textarea)::placeholder {
+  color: var(--text-secondary) !important;
+}
+
+.institute-ops-page button[class*="bg-gradient-to-"],
+.institute-ops-page button[class*="bg-blue-600"] {
+  color: #ffffff !important;
+}
+
+.institute-ops-page [class*="bg-gradient-to-"] .text-white {
+  color: #ffffff !important;
+}
+
+.institute-ops-page .text-blue-400 { color: #1d4ed8 !important; }
+.institute-ops-page .text-cyan-400 { color: #0e7490 !important; }
+.institute-ops-page .text-green-400,
+.institute-ops-page .text-emerald-400 { color: #047857 !important; }
+.institute-ops-page .text-amber-400,
+.institute-ops-page .text-yellow-400 { color: #a16207 !important; }
+.institute-ops-page .text-red-400 { color: #b91c1c !important; }
+
+[data-theme="dark"] .institute-ops-page .text-blue-400 { color: #60a5fa !important; }
+[data-theme="dark"] .institute-ops-page .text-cyan-400 { color: #22d3ee !important; }
+[data-theme="dark"] .institute-ops-page .text-green-400,
+[data-theme="dark"] .institute-ops-page .text-emerald-400 { color: #34d399 !important; }
+[data-theme="dark"] .institute-ops-page .text-amber-400,
+[data-theme="dark"] .institute-ops-page .text-yellow-400 { color: #fbbf24 !important; }
+[data-theme="dark"] .institute-ops-page .text-red-400 { color: #f87171 !important; }
+
 /* ═══════════════════════════════════════════════
    SCROLLBARS
 ═══════════════════════════════════════════════ */

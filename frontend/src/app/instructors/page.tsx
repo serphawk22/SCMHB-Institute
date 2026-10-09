@@ -40,8 +40,8 @@ export default function InstructorsPage() {
   const renderStars = (rating: number) => Array.from({length:5},(_,i)=><Star key={i} className={`w-3.5 h-3.5 ${i<Math.round(rating)?"text-amber-400 fill-amber-400":"text-zinc-600"}`} />);
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
+    <div className="institute-ops-page space-y-8">
+      <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <h1 className="text-3xl font-bold text-white flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center"><UserCog className="w-5 h-5 text-white" /></div>
@@ -49,7 +49,7 @@ export default function InstructorsPage() {
           </h1>
           <p className="text-zinc-400 mt-1">Manage instructors and track their performance</p>
         </div>
-        <button onClick={openCreate} className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 text-white font-semibold hover:opacity-90 transition shadow-lg shadow-amber-500/20">
+        <button onClick={openCreate} className="flex items-center gap-2 whitespace-nowrap px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 text-white font-semibold hover:opacity-90 transition shadow-lg shadow-amber-500/20">
           <Plus className="w-4 h-4" /> Add Instructor
         </button>
       </div>
