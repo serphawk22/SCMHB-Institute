@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { CalendarClock, Loader2, Video, PhoneCall, MapPin, X } from "lucide-react";
 
-export type ScheduleType = "followup" | "demo" | "walkin";
+export type ScheduleType = "followup" | "webinar" | "walkin" | "demo";
 
 export interface SchedulePayload {
   scheduled_at: string;
@@ -43,16 +43,16 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const isDemo = type === "demo";
+  const isWebinar = type === "webinar" || type === "demo";
   const isWalkIn = type === "walkin";
-  const Icon = isDemo ? Video : isWalkIn ? MapPin : PhoneCall;
-  const accent = isDemo
-    ? "from-fuchsia-500 to-violet-600"
+  const Icon = isWebinar ? Video : isWalkIn ? MapPin : PhoneCall;
+  const accent = isWebinar
+    ? "from-indigo-600 to-violet-700"
     : isWalkIn
     ? "from-sky-500 to-indigo-600"
     : "from-amber-500 to-orange-600";
 
-  const modalTitle = isDemo ? "Schedule a demo" : isWalkIn ? "Schedule a walk-in" : "Schedule a follow-up";
+  const modalTitle = isWebinar ? "Schedule a webinar" : isWalkIn ? "Schedule a walk-in" : "Schedule a follow-up";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,11 +115,11 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
             </label>
           )}
 
-          {isDemo && (
+          {isWebinar && (
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              <span className="mb-1.5 block">Meeting link (optional)</span>
+              <span className="mb-1.5 block">Meeting / Webinar link (optional)</span>
               <input
-                value={url} onChange={e => setUrl(e.target.value)} placeholder="https://meet.google.com/..."
+                value={url} onChange={e => setUrl(e.target.value)} placeholder="https://zoom.us/j/... or Google Meet"
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium normal-case tracking-normal text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
               />
             </label>
@@ -129,7 +129,7 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
             <span className="mb-1.5 block">Notes (optional)</span>
             <textarea
               rows={3} value={notes} onChange={e => setNotes(e.target.value)}
-              placeholder={isDemo ? "Topics to cover, who will attend…" : isWalkIn ? "Counselor name, documents to bring…" : "What to discuss on the call…"}
+              placeholder={isWebinar ? "Webinar topic, presentation link, or student questions…" : isWalkIn ? "Counselor name, documents to bring…" : "What to discuss on the call…"}
               className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium normal-case tracking-normal text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
             />
           </label>
@@ -145,7 +145,7 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
           <button type="submit" disabled={saving}
             className={`flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r ${accent} py-2.5 text-sm font-semibold text-white shadow-md hover:opacity-90 disabled:opacity-50`}>
             {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {submitLabel || (isDemo ? "Schedule demo" : isWalkIn ? "Schedule walk-in" : "Schedule follow-up")}
+            {submitLabel || (isWebinar ? "Schedule webinar" : isWalkIn ? "Schedule walk-in" : "Schedule follow-up")}
           </button>
         </div>
       </motion.form>

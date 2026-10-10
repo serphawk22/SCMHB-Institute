@@ -12,11 +12,11 @@ import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import LeadScheduleModal, { SchedulePayload } from "@/components/LeadScheduleModal";
 
-type Kind = "all" | "demo" | "followup" | "walkin";
+type Kind = "all" | "webinar" | "demo" | "followup" | "walkin";
 
 interface ScheduleItem {
   id: number;
-  type: "demo" | "followup" | "walkin";
+  type: "webinar" | "demo" | "followup" | "walkin";
   lead_id: number;
   lead_name: string;
   phone?: string | null;
@@ -101,9 +101,15 @@ export default function SchedulePage() {
 
   useEffect(() => { load(); }, [load]);
 
+  const matchesKind = (itemType: string, selectedKind: Kind) => {
+    if (selectedKind === "all") return true;
+    if (selectedKind === "webinar" || selectedKind === "demo") return itemType === "webinar" || itemType === "demo";
+    return itemType === selectedKind;
+  };
+
   const visible = useMemo(
     () => items
-      .filter(i => kind === "all" || i.type === kind)
+      .filter(i => matchesKind(i.type, kind))
       .sort((a, b) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime()),
     [items, kind],
   );
@@ -119,7 +125,7 @@ export default function SchedulePage() {
 
   const counts = useMemo(() => ({
     all: items.length,
-    demo: items.filter(i => i.type === "demo").length,
+    webinar: items.filter(i => i.type === "webinar" || i.type === "demo").length,
     followup: items.filter(i => i.type === "followup").length,
     walkin: items.filter(i => i.type === "walkin").length,
     today: items.filter(i => groupOf(i.scheduled_at) === "Today").length,
@@ -127,6 +133,7 @@ export default function SchedulePage() {
   }), [items]);
 
   const endpoint = (item: ScheduleItem) => {
+    if (item.type === "webinar") return `${API_BASE_URL}/lead-webinars/${item.id}`;
     if (item.type === "demo") return `${API_BASE_URL}/lead-demo-sessions/${item.id}`;
     if (item.type === "walkin") return `${API_BASE_URL}/lead-walk-ins/${item.id}`;
     return `${API_BASE_URL}/lead-follow-ups/${item.id}`;
@@ -143,7 +150,8 @@ export default function SchedulePage() {
   };
 
   const act = async (item: ScheduleItem, kindOfAction: "done" | "not_attended" | "cancel") => {
-    const itemLabel = item.type === "demo" ? "demo" : item.type === "walkin" ? "walk-in" : "follow-up";
+    const isWebinar = item.type === "webinar" || item.type === "demo";
+    const itemLabel = isWebinar ? "webinar" : item.type === "walkin" ? "walk-in" : "follow-up";
     if (kindOfAction === "cancel" && !confirm(`Cancel this ${itemLabel} for ${item.lead_name}?`)) return;
     const key = `${item.type}-${item.id}`;
     setBusyKey(key);
@@ -154,7 +162,7 @@ export default function SchedulePage() {
       } else if (kindOfAction === "cancel") {
         status = "Cancelled";
       } else if (kindOfAction === "done") {
-        status = (item.type === "demo" || item.type === "walkin") ? "Attended" : "Done";
+        status = (isWebinar || item.type === "walkin") ? "Attended" : "Done";
       }
       await patch(item, { status });
       await load(true);
@@ -168,7 +176,7 @@ export default function SchedulePage() {
   const submitReschedule = async (p: SchedulePayload) => {
     if (!reschedule) return;
     const body: Record<string, unknown> = { scheduled_at: p.scheduled_at, notes: p.notes || null };
-    if (reschedule.type === "demo") body.meeting_url = p.meeting_url || null;
+    if (reschedule.type === "webinar" || reschedule.type === "demo") body.meeting_url = p.meeting_url || null;
     if (reschedule.type === "walkin") body.location = p.location || "Campus Front Desk";
     await patch(reschedule, body);
     setReschedule(null);
@@ -177,10 +185,11 @@ export default function SchedulePage() {
 
   const tabs: { id: Kind; label: string; count: number }[] = [
     { id: "all", label: "All", count: counts.all },
-    { id: "demo", label: "Demos", count: counts.demo },
+    { id: "webinar", label: "Webinars", count: counts.webinar },
     { id: "followup", label: "Follow-ups", count: counts.followup },
     { id: "walkin", label: "Walk-ins", count: counts.walkin },
   ];
+
 
   return (
     <div className="flex h-full flex-col bg-[#f8fafc] dark:bg-black">
@@ -193,7 +202,7 @@ export default function SchedulePage() {
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Important Dates</h1>
               <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                {isAdmin ? "Everything scheduled across the sales team" : "Everything scheduled for your leads"} · Follow-ups, Demos &amp; Walk-ins · nearest first
+                {isAdmin ? "Everything scheduled across the sales team" : "Everything scheduled for your leads"} · Follow-ups, Webinars &amp; Walk-ins · nearest first
               </p>
             </div>
           </div>
@@ -211,7 +220,7 @@ export default function SchedulePage() {
           {[
             { label: "Overdue", value: counts.overdue, color: "text-red-600", bg: "bg-red-500/10" },
             { label: "Today", value: counts.today, color: "text-emerald-600", bg: "bg-emerald-500/10" },
-            { label: "Demos", value: counts.demo, color: "text-fuchsia-600", bg: "bg-fuchsia-500/10" },
+            { label: "Webinars", value: counts.webinar, color: "text-indigo-600", bg: "bg-indigo-500/10" },
             { label: "Follow-ups", value: counts.followup, color: "text-amber-600", bg: "bg-amber-500/10" },
             { label: "Walk-ins", value: counts.walkin, color: "text-sky-600", bg: "bg-sky-500/10" },
           ].map(s => (
@@ -238,7 +247,7 @@ export default function SchedulePage() {
             </div>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Nothing scheduled</h3>
             <p className="mt-1 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-              Move a lead to <b>Follow-up</b>, <b>Demo</b>, or <b>Walk-in Scheduled</b> in <Link href="/leads" className="font-semibold text-blue-600 hover:underline">Student Leads</Link> and it will show up here.
+              Move a lead to <b>Follow-up</b>, <b>Webinar Scheduled</b>, or <b>Walk-in Scheduled</b> in <Link href="/leads" className="font-semibold text-blue-600 hover:underline">Student Leads</Link> and it will show up here.
             </p>
           </div>
         ) : (
@@ -252,20 +261,20 @@ export default function SchedulePage() {
                 <div className="space-y-3">
                   {rows.map(item => {
                     const key = `${item.type}-${item.id}`;
-                    const isDemo = item.type === "demo";
+                    const isWebinar = item.type === "webinar" || item.type === "demo";
                     const isWalkIn = item.type === "walkin";
                     const overdue = group === "Overdue";
-                    const Icon = isDemo ? Video : isWalkIn ? MapPin : PhoneCall;
+                    const Icon = isWebinar ? Video : isWalkIn ? MapPin : PhoneCall;
                     const busy = busyKey === key;
-                    const badgeClass = isDemo
-                      ? "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300"
+                    const badgeClass = isWebinar
+                      ? "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300"
                       : isWalkIn
                       ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
                       : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
                     const dateBgClass = overdue
                       ? "bg-red-500/10 text-red-600"
-                      : isDemo
-                      ? "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300"
+                      : isWebinar
+                      ? "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300"
                       : isWalkIn
                       ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
                       : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
@@ -285,7 +294,7 @@ export default function SchedulePage() {
                               <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
                             </Link>
                             <span className={`rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${badgeClass}`}>
-                              {isDemo ? "Demo" : isWalkIn ? "Walk-in" : "Follow-up"}
+                              {isWebinar ? "Webinar" : isWalkIn ? "Walk-in" : "Follow-up"}
                             </span>
                             {overdue && <span className="rounded-md bg-red-500/10 px-2 py-0.5 text-[11px] font-bold uppercase text-red-600">Overdue</span>}
                           </div>
@@ -305,8 +314,8 @@ export default function SchedulePage() {
                           {item.notes && <p className="mt-2 line-clamp-2 text-[13px] text-slate-600 dark:text-slate-300">{item.notes}</p>}
                           {item.meeting_url && (
                             <a href={item.meeting_url} target="_blank" rel="noreferrer"
-                              className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-fuchsia-600 hover:underline">
-                              <ExternalLink className="h-3.5 w-3.5" /> Join meeting
+                              className="mt-2 inline-flex items-center gap-1 text-[13px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+                              <ExternalLink className="h-3.5 w-3.5" /> Join webinar
                             </a>
                           )}
                         </div>
@@ -315,11 +324,11 @@ export default function SchedulePage() {
                           <button onClick={() => act(item, "done")} disabled={busy}
                             className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
                             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                            {(isDemo || isWalkIn) ? "Attended" : "Done"}
+                            {(isWebinar || isWalkIn) ? "Attended" : "Done"}
                           </button>
-                          {(isDemo || isWalkIn) && (
+                          {(isWebinar || isWalkIn) && (
                             <button onClick={() => act(item, "not_attended")} disabled={busy}
-                              title={isDemo ? "Mark demo not attended" : "Mark walk-in not attended"}
+                              title={isWebinar ? "Mark webinar not attended" : "Mark walk-in not attended"}
                               className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 text-xs font-bold hover:bg-rose-100 disabled:opacity-50 dark:bg-rose-950/40 dark:border-rose-900/60 dark:text-rose-300">
                               <UserX className="h-3.5 w-3.5" /> Not Attended
                             </button>

@@ -37,6 +37,7 @@ interface Lead {
   owner_name?: string | null;
   next_followup_at?: string | null;
   next_demo_at?: string | null;
+  next_webinar_at?: string | null;
   next_walkin_at?: string | null;
 }
 
@@ -49,8 +50,7 @@ const STAGES = [
   "Contacted",
   "Not Responded",
   "Follow-up",
-  "Demo",
-  "Demo Not Attended",
+  "Webinar Scheduled",
   "Webinar Attended",
   "Webinar Not Attended",
   "Walk-in Scheduled",
@@ -66,8 +66,7 @@ const STAGE_STYLE: Record<Stage, { chip: string; dot: string; column: string; ri
   Contacted: { chip: "bg-violet-500/10 text-violet-700 border-violet-500/30 dark:text-violet-300", dot: "bg-violet-500", column: "from-violet-500/10", ring: "ring-violet-500" },
   "Not Responded": { chip: "bg-slate-500/10 text-slate-700 border-slate-500/30 dark:text-slate-300", dot: "bg-slate-400", column: "from-slate-500/10", ring: "ring-slate-400" },
   "Follow-up": { chip: "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300", dot: "bg-amber-500", column: "from-amber-500/10", ring: "ring-amber-500" },
-  Demo: { chip: "bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300", dot: "bg-fuchsia-500", column: "from-fuchsia-500/10", ring: "ring-fuchsia-500" },
-  "Demo Not Attended": { chip: "bg-rose-500/10 text-rose-700 border-rose-500/30 dark:text-rose-300", dot: "bg-rose-500", column: "from-rose-500/10", ring: "ring-rose-500" },
+  "Webinar Scheduled": { chip: "bg-indigo-500/10 text-indigo-700 border-indigo-500/30 dark:text-indigo-300", dot: "bg-indigo-500", column: "from-indigo-500/10", ring: "ring-indigo-500" },
   "Webinar Attended": { chip: "bg-teal-500/10 text-teal-700 border-teal-500/30 dark:text-teal-300", dot: "bg-teal-500", column: "from-teal-500/10", ring: "ring-teal-500" },
   "Webinar Not Attended": { chip: "bg-zinc-500/10 text-zinc-700 border-zinc-500/30 dark:text-zinc-300", dot: "bg-zinc-500", column: "from-zinc-500/10", ring: "ring-zinc-500" },
   "Walk-in Scheduled": { chip: "bg-sky-500/10 text-sky-700 border-sky-500/30 dark:text-sky-300", dot: "bg-sky-500", column: "from-sky-500/10", ring: "ring-sky-500" },
@@ -84,7 +83,9 @@ function stageOf(lead: Pick<Lead, "status" | "is_converted" | "converted_student
   if ((STAGES as readonly string[]).includes(s)) return s as Stage;
   const legacy: Record<string, Stage> = {
     Qualified: "Contacted", Interested: "Contacted",
-    "Demo Scheduled": "Demo", "Demo Completed": "Demo", "Demo Missed": "Demo Not Attended",
+    Demo: "Webinar Scheduled", "Demo Scheduled": "Webinar Scheduled",
+    "Demo Completed": "Webinar Attended", "Demo Attended": "Webinar Attended",
+    "Demo Missed": "Webinar Not Attended", "Demo Not Attended": "Webinar Not Attended",
     "Proposal Sent": "Follow-up", Negotiation: "Follow-up", "Follow Up": "Follow-up",
     Won: "Converted", Enrolled: "Converted",
     "Walk-in": "Walk-in Scheduled", "Walkin Scheduled": "Walk-in Scheduled",
@@ -101,11 +102,12 @@ function fmtWhen(iso?: string | null): string {
   return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 }
 
-/** Earliest upcoming scheduled item (follow-up, demo, or walk-in) for a lead. */
+/** Earliest upcoming scheduled item (follow-up, webinar, or walk-in) for a lead. */
 function nextScheduled(lead: Lead): { type: ScheduleType; at: string } | null {
   const items: { type: ScheduleType; at: string }[] = [];
   if (lead.next_followup_at) items.push({ type: "followup", at: lead.next_followup_at });
-  if (lead.next_demo_at) items.push({ type: "demo", at: lead.next_demo_at });
+  if (lead.next_webinar_at) items.push({ type: "webinar", at: lead.next_webinar_at });
+  else if (lead.next_demo_at) items.push({ type: "webinar", at: lead.next_demo_at });
   if (lead.next_walkin_at) items.push({ type: "walkin", at: lead.next_walkin_at });
   items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
   return items[0] || null;
@@ -115,11 +117,11 @@ function ScheduleChip({ lead }: { lead: Lead }) {
   const next = nextScheduled(lead);
   if (!next) return <span className="text-slate-400 text-[12px]">—</span>;
   const overdue = new Date(next.at).getTime() < Date.now();
-  const Icon = next.type === "demo" ? Video : next.type === "walkin" ? MapPin : PhoneCall;
+  const Icon = (next.type === "webinar" || next.type === "demo") ? Video : next.type === "walkin" ? MapPin : PhoneCall;
   const colorClass = overdue
     ? "bg-red-500/10 text-red-600 border-red-500/30"
-    : next.type === "demo"
-    ? "bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300"
+    : (next.type === "webinar" || next.type === "demo")
+    ? "bg-indigo-500/10 text-indigo-700 border-indigo-500/30 dark:text-indigo-300"
     : next.type === "walkin"
     ? "bg-sky-500/10 text-sky-700 border-sky-500/30 dark:text-sky-300"
     : "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300";
@@ -249,8 +251,12 @@ export default function LeadsPage() {
       alert("This lead is already enrolled as a student, so it stays in Converted.");
       return;
     }
-    if (target === "Follow-up" || target === "Demo") {
-      setSchedule({ lead, type: target === "Demo" ? "demo" : "followup" });
+    if (target === "Follow-up") {
+      setSchedule({ lead, type: "followup" });
+      return;
+    }
+    if (target === "Webinar Scheduled") {
+      setSchedule({ lead, type: "webinar" });
       return;
     }
     if (target === "Walk-in Scheduled") {
@@ -297,11 +303,11 @@ export default function LeadsPage() {
   const submitSchedule = async (p: SchedulePayload) => {
     if (!schedule) return;
     const { lead, type } = schedule;
-    const isDemo = type === "demo";
+    const isWebinar = type === "webinar" || type === "demo";
     const isWalkIn = type === "walkin";
-    const endpoint = isDemo ? "demo-sessions" : isWalkIn ? "walk-ins" : "follow-ups";
+    const endpoint = isWebinar ? "webinars" : isWalkIn ? "walk-ins" : "follow-ups";
     const body: any = { scheduled_at: p.scheduled_at, notes: p.notes || null };
-    if (isDemo) body.meeting_url = p.meeting_url || null;
+    if (isWebinar) body.meeting_url = p.meeting_url || null;
     if (isWalkIn) body.location = p.location || "Campus Front Desk";
     const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/${endpoint}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -424,7 +430,7 @@ export default function LeadsPage() {
   const stats = [
     { label: t("leads.total_leads"), value: leads.length, color: "text-blue-600", bg: "bg-blue-500/10" },
     { label: t("leads.new"), value: stageCounts.New, color: "text-violet-600", bg: "bg-violet-500/10" },
-    { label: "Important Dates", value: (stageCounts["Follow-up"] || 0) + (stageCounts.Demo || 0) + (stageCounts["Walk-in Scheduled"] || 0), color: "text-amber-600", bg: "bg-amber-500/10" },
+    { label: "Important Dates", value: (stageCounts["Follow-up"] || 0) + (stageCounts["Webinar Scheduled"] || 0) + (stageCounts["Walk-in Scheduled"] || 0), color: "text-amber-600", bg: "bg-amber-500/10" },
     { label: t("leads.converted"), value: stageCounts.Converted, color: "text-emerald-600", bg: "bg-emerald-500/10" },
   ];
 

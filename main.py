@@ -7300,9 +7300,20 @@ def dashboard_stats(
 
     total_enrollment_paid = sum(enr.amount_paid or 0 for enr in all_enrollments)
     total_enrollment_due = sum(enr.amount_due or 0 for enr in all_enrollments)
-    if total_enrollment_paid == 0 and total_enrollment_due == 0:
+    total_enrollment_fee = sum(enr.total_fee or 0 for enr in all_enrollments)
+
+    all_payments = session.exec(select(PaymentRecord)).all()
+    total_payments_amount = sum(p.amount or 0 for p in all_payments)
+    if total_payments_amount > total_enrollment_paid:
+        total_enrollment_paid = total_payments_amount
+
+    # If training enrollments exist, total revenue is based on collected fees & advances made
+    if total_enrollment_paid > 0 or total_enrollment_fee > 0:
+        total_revenue = round(total_enrollment_paid, 2)
+    elif total_enrollment_paid == 0 and total_enrollment_due == 0:
         total_enrollment_paid = paid_invoices_value
         total_enrollment_due = sent_invoices_value + overdue_invoices_value
+
     revenue_health_pie = [
         {"name": "Collected / Paid", "value": round(total_enrollment_paid, 2)},
         {"name": "Outstanding / Due", "value": round(total_enrollment_due, 2)}
@@ -7340,7 +7351,12 @@ def dashboard_stats(
 
     today_iso = datetime.utcnow().date().isoformat()
     today_tasks_count = sum(1 for t in all_task_entries if t.work_date == today_iso)
-    pending_demos_count = sum(1 for l in all_leads if (l.status or "").lower() in ("demo scheduled", "demo"))
+    pending_scheduled_count = (
+        len(session.exec(select(LeadWebinar).where(LeadWebinar.status == "Scheduled")).all()) +
+        len(session.exec(select(LeadWalkIn).where(LeadWalkIn.status == "Scheduled")).all()) +
+        len(session.exec(select(LeadFollowUp).where(LeadFollowUp.status == "Pending")).all()) +
+        len(session.exec(select(LeadDemoSession).where(LeadDemoSession.status == "Scheduled")).all())
+    )
     unassigned_leads_count = sum(1 for l in all_leads if not l.owner_id)
 
     return {
@@ -7407,7 +7423,8 @@ def dashboard_stats(
             "totalEnrollments": len(all_enrollments),
             "totalCollectedFees": round(total_enrollment_paid, 2),
             "totalOutstandingFees": round(total_enrollment_due, 2),
-            "pendingDemos": pending_demos_count,
+            "totalFeeBooked": round(total_enrollment_fee, 2),
+            "pendingDemos": pending_scheduled_count,
             "unassignedLeads": unassigned_leads_count,
             "todayTasksCount": today_tasks_count,
             "totalTasksCount": len(all_task_entries),
@@ -11097,6 +11114,19 @@ class LeadWalkInUpdateRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class LeadWebinarCreateRequest(BaseModel):
+    scheduled_at: datetime
+    meeting_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LeadWebinarUpdateRequest(BaseModel):
+    scheduled_at: Optional[datetime] = None
+    status: Optional[str] = None
+    meeting_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class BackgroundDetailsUpdateRequest(BaseModel):
     details: Dict[str, str]
 
@@ -11162,7 +11192,7 @@ def get_leads(owner_id: Optional[int] = None, session: Session = Depends(get_ses
     _owner_names = {}
     if _owner_ids:
         _owner_names = {u.id: u.name for u in session.exec(select(User).where(User.id.in_(_owner_ids))).all()}
-    _next_fu, _next_demo, _next_walkin = {}, {}, {}
+    _next_fu, _next_demo, _next_walkin, _next_webinar = {}, {}, {}, {}
     if _lead_ids:
         _now = datetime.utcnow()
         for fu in session.exec(select(LeadFollowUp).where(LeadFollowUp.lead_id.in_(_lead_ids), LeadFollowUp.status == "Pending").order_by(LeadFollowUp.scheduled_at)).all():
@@ -11171,12 +11201,15 @@ def get_leads(owner_id: Optional[int] = None, session: Session = Depends(get_ses
             _next_demo.setdefault(dm.lead_id, dm.scheduled_at.isoformat())
         for wk in session.exec(select(LeadWalkIn).where(LeadWalkIn.lead_id.in_(_lead_ids), LeadWalkIn.status == "Scheduled").order_by(LeadWalkIn.scheduled_at)).all():
             _next_walkin.setdefault(wk.lead_id, wk.scheduled_at.isoformat())
+        for wb in session.exec(select(LeadWebinar).where(LeadWebinar.lead_id.in_(_lead_ids), LeadWebinar.status == "Scheduled").order_by(LeadWebinar.scheduled_at)).all():
+            _next_webinar.setdefault(wb.lead_id, wb.scheduled_at.isoformat())
     for lead in leads:
         lead_item = lead.dict()
         lead_item["owner_name"] = _owner_names.get(lead.owner_id)
         lead_item["next_followup_at"] = _next_fu.get(lead.id)
         lead_item["next_demo_at"] = _next_demo.get(lead.id)
         lead_item["next_walkin_at"] = _next_walkin.get(lead.id)
+        lead_item["next_webinar_at"] = _next_webinar.get(lead.id) or _next_demo.get(lead.id)
         if lead.course_interest_id:
             course = session.get(Course, lead.course_interest_id)
             if course:
@@ -11817,10 +11850,10 @@ def update_lead_demo_session(demo_session_id: int, body: LeadDemoUpdateRequest, 
     demo.updated_at = datetime.utcnow()
     session.add(demo)
     if data.get("status") in ("Missed", "Not Attended"):
-        lead.status = "Demo Not Attended"
+        lead.status = "Webinar Not Attended"
         session.add(lead)
     elif data.get("status") == "Attended":
-        lead.status = "Demo"
+        lead.status = "Webinar Attended"
         session.add(lead)
     session.commit()
     session.refresh(demo)
@@ -11832,8 +11865,7 @@ LEAD_STAGES = [
     "Contacted",
     "Not Responded",
     "Follow-up",
-    "Demo",
-    "Demo Not Attended",
+    "Webinar Scheduled",
     "Webinar Attended",
     "Webinar Not Attended",
     "Walk-in Scheduled",
@@ -11978,6 +12010,66 @@ def update_lead_walkin(walk_in_id: int, body: LeadWalkInUpdateRequest, session: 
     return {"walk_in": _lead_walkin_dict(wk)}
 
 
+def _lead_webinar_dict(wb: LeadWebinar):
+    return {
+        "id": wb.id,
+        "lead_id": wb.lead_id,
+        "scheduled_at": wb.scheduled_at.isoformat(),
+        "status": wb.status,
+        "meeting_url": wb.meeting_url,
+        "notes": wb.notes,
+        "created_at": wb.created_at.isoformat(),
+    }
+
+
+@app.post("/leads/{lead_id}/webinars")
+def schedule_lead_webinar(lead_id: int, body: LeadWebinarCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    lead = session.get(Lead, lead_id)
+    _require_lead_schedule_access(lead, actor)
+    wb = LeadWebinar(
+        tenant_id=lead.tenant_id or actor.tenant_id,
+        lead_id=lead_id,
+        scheduled_at=body.scheduled_at,
+        meeting_url=(body.meeting_url or "").strip() or None,
+        notes=(body.notes or "").strip() or None,
+        created_by=actor.id,
+        status="Scheduled",
+    )
+    lead.status = "Webinar Scheduled"
+    session.add(wb)
+    session.add(lead)
+    session.commit()
+    session.refresh(wb)
+    return {"webinar": _lead_webinar_dict(wb)}
+
+
+@app.patch("/lead-webinars/{webinar_id}")
+def update_lead_webinar(webinar_id: int, body: LeadWebinarUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    wb = session.get(LeadWebinar, webinar_id)
+    if not wb:
+        raise HTTPException(status_code=404, detail="Webinar record not found")
+    lead = session.get(Lead, wb.lead_id)
+    _require_lead_schedule_access(lead, actor)
+    data = body.dict(exclude_unset=True)
+    if data.get("status") not in (None, "Scheduled", "Attended", "Not Attended", "Missed", "Cancelled"):
+        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Not Attended, Missed, or Cancelled")
+    for key, value in data.items():
+        setattr(wb, key, value)
+    wb.updated_at = datetime.utcnow()
+    session.add(wb)
+    if data.get("status") == "Attended":
+        lead.status = "Webinar Attended"
+        session.add(lead)
+    elif data.get("status") in ("Not Attended", "Missed"):
+        lead.status = "Webinar Not Attended"
+        session.add(lead)
+    session.commit()
+    session.refresh(wb)
+    return {"webinar": _lead_webinar_dict(wb)}
+
+
 @app.patch("/leads/{lead_id}/status")
 def update_lead_stage(lead_id: int, body: LeadStatusRequest, session: Session = Depends(get_session)):
     actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
@@ -11998,6 +12090,10 @@ def update_lead_stage(lead_id: int, body: LeadStatusRequest, session: Session = 
             dm.status = "Cancelled"
             dm.updated_at = now
             session.add(dm)
+        for wb in session.exec(select(LeadWebinar).where(LeadWebinar.lead_id == lead_id, LeadWebinar.status == "Scheduled")).all():
+            wb.status = "Cancelled"
+            wb.updated_at = now
+            session.add(wb)
     session.add(lead)
     session.commit()
     return {"ok": True, "status": lead.status}
@@ -12043,12 +12139,18 @@ def get_upcoming_schedule(kind: str = "all", include_done: bool = False, session
         for fu in session.exec(fq).all():
             items.append({**_base(leads[fu.lead_id]), "id": fu.id, "type": "followup", "scheduled_at": fu.scheduled_at.isoformat(),
                           "status": fu.status, "notes": fu.notes, "meeting_url": None, "_ts": fu.scheduled_at})
-    if kind in ("all", "demo"):
+    if kind in ("all", "webinar", "demo"):
+        wb_q = select(LeadWebinar).where(LeadWebinar.lead_id.in_(lead_ids))
+        if not include_done:
+            wb_q = wb_q.where(LeadWebinar.status == "Scheduled")
+        for wb in session.exec(wb_q).all():
+            items.append({**_base(leads[wb.lead_id]), "id": wb.id, "type": "webinar", "scheduled_at": wb.scheduled_at.isoformat(),
+                          "status": wb.status, "notes": wb.notes, "meeting_url": wb.meeting_url, "location": None, "_ts": wb.scheduled_at})
         dq = select(LeadDemoSession).where(LeadDemoSession.lead_id.in_(lead_ids))
         if not include_done:
             dq = dq.where(LeadDemoSession.status == "Scheduled")
         for dm in session.exec(dq).all():
-            items.append({**_base(leads[dm.lead_id]), "id": dm.id, "type": "demo", "scheduled_at": dm.scheduled_at.isoformat(),
+            items.append({**_base(leads[dm.lead_id]), "id": dm.id, "type": "webinar", "scheduled_at": dm.scheduled_at.isoformat(),
                           "status": dm.status, "notes": dm.notes, "meeting_url": dm.meeting_url, "location": None, "_ts": dm.scheduled_at})
     if kind in ("all", "walkin"):
         wq = select(LeadWalkIn).where(LeadWalkIn.lead_id.in_(lead_ids))
@@ -18222,7 +18324,7 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
 # TRAINING INSTITUTE API ENDPOINTS
 # ============================================================
 
-from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn
+from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn, LeadWebinar
 
 # --- Create tables on startup (migration) ---
 def _create_institute_tables():
@@ -18230,7 +18332,7 @@ def _create_institute_tables():
     from database import engine
     inspector = inspect(engine)
     existing = inspector.get_table_names()
-    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn]
+    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn, LeadWebinar]
     from sqlmodel import SQLModel
     for model in tables_to_create:
         if model.__tablename__ not in existing:
