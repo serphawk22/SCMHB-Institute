@@ -2,7 +2,7 @@
 import { API_BASE_URL } from "@/config";
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ArrowUpRight, Clock, Edit2, Trash2, Tag, GraduationCap, CalendarClock, Video, PhoneCall, UserRound } from "lucide-react";
+import { Search, Plus, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ArrowUpRight, Clock, Edit2, Trash2, Tag, GraduationCap, CalendarClock, Video, PhoneCall, MapPin, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ViewSwitcher, ViewType } from "@/components/ViewSwitcher";
@@ -37,13 +37,28 @@ interface Lead {
   owner_name?: string | null;
   next_followup_at?: string | null;
   next_demo_at?: string | null;
+  next_walkin_at?: string | null;
 }
 
 interface CourseOption { id: number; title: string; category?: string | null; duration_hours?: number | null; duration_weeks?: number | null; }
 
 const SOURCES = ["Walk-in", "Referral", "WhatsApp", "Instagram", "Facebook", "Website", "Phone Call", "Event", "Other"];
 
-const STAGES = ["New", "Contacted", "Not Responded", "Follow-up", "Demo", "Converted", "Lost"] as const;
+const STAGES = [
+  "New",
+  "Contacted",
+  "Not Responded",
+  "Follow-up",
+  "Demo",
+  "Demo Not Attended",
+  "Webinar Attended",
+  "Webinar Not Attended",
+  "Walk-in Scheduled",
+  "Walk-in Attended",
+  "Walk-in Not Attended",
+  "Converted",
+  "Lost",
+] as const;
 type Stage = typeof STAGES[number];
 
 const STAGE_STYLE: Record<Stage, { chip: string; dot: string; column: string; ring: string }> = {
@@ -52,18 +67,29 @@ const STAGE_STYLE: Record<Stage, { chip: string; dot: string; column: string; ri
   "Not Responded": { chip: "bg-slate-500/10 text-slate-700 border-slate-500/30 dark:text-slate-300", dot: "bg-slate-400", column: "from-slate-500/10", ring: "ring-slate-400" },
   "Follow-up": { chip: "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300", dot: "bg-amber-500", column: "from-amber-500/10", ring: "ring-amber-500" },
   Demo: { chip: "bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300", dot: "bg-fuchsia-500", column: "from-fuchsia-500/10", ring: "ring-fuchsia-500" },
+  "Demo Not Attended": { chip: "bg-rose-500/10 text-rose-700 border-rose-500/30 dark:text-rose-300", dot: "bg-rose-500", column: "from-rose-500/10", ring: "ring-rose-500" },
+  "Webinar Attended": { chip: "bg-teal-500/10 text-teal-700 border-teal-500/30 dark:text-teal-300", dot: "bg-teal-500", column: "from-teal-500/10", ring: "ring-teal-500" },
+  "Webinar Not Attended": { chip: "bg-zinc-500/10 text-zinc-700 border-zinc-500/30 dark:text-zinc-300", dot: "bg-zinc-500", column: "from-zinc-500/10", ring: "ring-zinc-500" },
+  "Walk-in Scheduled": { chip: "bg-sky-500/10 text-sky-700 border-sky-500/30 dark:text-sky-300", dot: "bg-sky-500", column: "from-sky-500/10", ring: "ring-sky-500" },
+  "Walk-in Attended": { chip: "bg-cyan-500/10 text-cyan-700 border-cyan-500/30 dark:text-cyan-300", dot: "bg-cyan-500", column: "from-cyan-500/10", ring: "ring-cyan-500" },
+  "Walk-in Not Attended": { chip: "bg-orange-500/10 text-orange-700 border-orange-500/30 dark:text-orange-300", dot: "bg-orange-500", column: "from-orange-500/10", ring: "ring-orange-500" },
   Converted: { chip: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-300", dot: "bg-emerald-500", column: "from-emerald-500/10", ring: "ring-emerald-500" },
   Lost: { chip: "bg-red-500/10 text-red-600 border-red-500/30 dark:text-red-300", dot: "bg-red-500", column: "from-red-500/10", ring: "ring-red-500" },
 };
 
-/** Normalises current and legacy statuses to one of the seven stages. */
+/** Normalises current and legacy statuses to one of the stages. */
 function stageOf(lead: Pick<Lead, "status" | "is_converted" | "converted_student_id">): Stage {
   if (lead.converted_student_id || lead.is_converted) return "Converted";
   const s = lead.status || "New";
   if ((STAGES as readonly string[]).includes(s)) return s as Stage;
   const legacy: Record<string, Stage> = {
-    Qualified: "Contacted", Interested: "Contacted", "Demo Scheduled": "Demo", "Demo Completed": "Demo",
-    "Proposal Sent": "Follow-up", Negotiation: "Follow-up", "Follow Up": "Follow-up", Won: "Converted", Enrolled: "Converted",
+    Qualified: "Contacted", Interested: "Contacted",
+    "Demo Scheduled": "Demo", "Demo Completed": "Demo", "Demo Missed": "Demo Not Attended",
+    "Proposal Sent": "Follow-up", Negotiation: "Follow-up", "Follow Up": "Follow-up",
+    Won: "Converted", Enrolled: "Converted",
+    "Walk-in": "Walk-in Scheduled", "Walkin Scheduled": "Walk-in Scheduled",
+    "Walkin Attended": "Walk-in Attended", "Walkin Not Attended": "Walk-in Not Attended",
+    "Webinar": "Webinar Attended",
   };
   return legacy[s] || "New";
 }
@@ -75,11 +101,12 @@ function fmtWhen(iso?: string | null): string {
   return d.toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 }
 
-/** Earliest upcoming scheduled item (follow-up or demo) for a lead. */
+/** Earliest upcoming scheduled item (follow-up, demo, or walk-in) for a lead. */
 function nextScheduled(lead: Lead): { type: ScheduleType; at: string } | null {
   const items: { type: ScheduleType; at: string }[] = [];
   if (lead.next_followup_at) items.push({ type: "followup", at: lead.next_followup_at });
   if (lead.next_demo_at) items.push({ type: "demo", at: lead.next_demo_at });
+  if (lead.next_walkin_at) items.push({ type: "walkin", at: lead.next_walkin_at });
   items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
   return items[0] || null;
 }
@@ -88,9 +115,16 @@ function ScheduleChip({ lead }: { lead: Lead }) {
   const next = nextScheduled(lead);
   if (!next) return <span className="text-slate-400 text-[12px]">—</span>;
   const overdue = new Date(next.at).getTime() < Date.now();
-  const Icon = next.type === "demo" ? Video : PhoneCall;
+  const Icon = next.type === "demo" ? Video : next.type === "walkin" ? MapPin : PhoneCall;
+  const colorClass = overdue
+    ? "bg-red-500/10 text-red-600 border-red-500/30"
+    : next.type === "demo"
+    ? "bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300"
+    : next.type === "walkin"
+    ? "bg-sky-500/10 text-sky-700 border-sky-500/30 dark:text-sky-300"
+    : "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300";
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold border ${overdue ? "bg-red-500/10 text-red-600 border-red-500/30" : next.type === "demo" ? "bg-fuchsia-500/10 text-fuchsia-700 border-fuchsia-500/30 dark:text-fuchsia-300" : "bg-amber-500/10 text-amber-700 border-amber-500/30 dark:text-amber-300"}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold border ${colorClass}`}>
       <Icon className="w-3 h-3" /> {fmtWhen(next.at)}
     </span>
   );
@@ -219,6 +253,10 @@ export default function LeadsPage() {
       setSchedule({ lead, type: target === "Demo" ? "demo" : "followup" });
       return;
     }
+    if (target === "Walk-in Scheduled") {
+      setSchedule({ lead, type: "walkin" });
+      return;
+    }
     if (target === "Converted") {
       setEnrollLead(lead);
       return;
@@ -260,11 +298,14 @@ export default function LeadsPage() {
     if (!schedule) return;
     const { lead, type } = schedule;
     const isDemo = type === "demo";
-    const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/${isDemo ? "demo-sessions" : "follow-ups"}`, {
+    const isWalkIn = type === "walkin";
+    const endpoint = isDemo ? "demo-sessions" : isWalkIn ? "walk-ins" : "follow-ups";
+    const body: any = { scheduled_at: p.scheduled_at, notes: p.notes || null };
+    if (isDemo) body.meeting_url = p.meeting_url || null;
+    if (isWalkIn) body.location = p.location || "Campus Front Desk";
+    const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/${endpoint}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(isDemo
-        ? { scheduled_at: p.scheduled_at, meeting_url: p.meeting_url || null, notes: p.notes || null }
-        : { scheduled_at: p.scheduled_at, notes: p.notes || null }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(await apiError(res, "Could not save the schedule."));
     setSchedule(null);
@@ -383,7 +424,7 @@ export default function LeadsPage() {
   const stats = [
     { label: t("leads.total_leads"), value: leads.length, color: "text-blue-600", bg: "bg-blue-500/10" },
     { label: t("leads.new"), value: stageCounts.New, color: "text-violet-600", bg: "bg-violet-500/10" },
-    { label: "Follow-ups & Demos", value: stageCounts["Follow-up"] + stageCounts.Demo, color: "text-amber-600", bg: "bg-amber-500/10" },
+    { label: "Important Dates", value: (stageCounts["Follow-up"] || 0) + (stageCounts.Demo || 0) + (stageCounts["Walk-in Scheduled"] || 0), color: "text-amber-600", bg: "bg-amber-500/10" },
     { label: t("leads.converted"), value: stageCounts.Converted, color: "text-emerald-600", bg: "bg-emerald-500/10" },
   ];
 

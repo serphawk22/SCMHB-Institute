@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock
+  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -41,7 +41,7 @@ const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
-  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart
 };
 
 interface SidebarProps {
@@ -63,7 +63,8 @@ const defaultSidebarSections = [
     heading: "ADMISSIONS & SALES",
     items: [
       { id: "item-leads", name: "Student Leads", icon: "GraduationCap", href: "/leads", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
-      { id: "item-schedule", name: "Follow-ups & Demos", icon: "CalendarClock", href: "/schedule", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
+      { id: "item-schedule", name: "Important Dates", icon: "CalendarClock", href: "/schedule", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
+      { id: "item-lead-sources", name: "Lead Sources", icon: "PieChart", href: "/lead-sources", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
     ],
   },
   {

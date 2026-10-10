@@ -592,7 +592,7 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
             subtitle="Channel Share"
             icon={Globe}
             iconColor="text-pink-500"
-            href="/leads"
+            href="/lead-sources"
             data={
               adminStats?.leadSourcePie?.length
                 ? adminStats.leadSourcePie
@@ -782,6 +782,88 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
               <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
                 <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
                 <p className="text-sm font-medium">No deal stage data available</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* LEAD SOURCES WIN RATE & CONVERSION EFFICIENCY GRAPH                     */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      <motion.div variants={itemVariants} className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-pink-500" />
+              Lead Win Rate Percentage by Acquisition Source
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Real-time conversion efficiency per lead channel — measuring student enrollments against total inquiries.
+            </p>
+          </div>
+          <Link
+            href="/lead-sources"
+            className="text-xs font-semibold px-2.5 py-1 bg-pink-500/10 text-pink-600 hover:bg-pink-500/20 rounded-md transition-colors flex items-center gap-1 shrink-0 self-start sm:self-auto"
+          >
+            Explore Lead Sources <ArrowUpRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+
+        {/* Win Rate Bar Chart Card */}
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden flex flex-col h-[320px]">
+          <div className="p-4 sm:p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
+            <h3 className="font-bold text-[var(--text-primary)] text-sm flex items-center gap-2">
+              <PieChartIcon className="w-4 h-4 text-pink-500" /> Win Rate % (Enrollments / Total Inquiries)
+            </h3>
+            <span className="text-xs font-semibold px-2 py-0.5 bg-pink-500/10 text-pink-600 rounded-md">
+              Channel Benchmark
+            </span>
+          </div>
+          <div className="p-4 flex-1 w-full h-full min-h-0">
+            {adminStats?.leadSourceWinRate?.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={adminStats.leadSourceWinRate} margin={{ top: 10, right: 15, left: -15, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis
+                    dataKey="source"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 600 }}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+                    domain={[0, 100]}
+                    unit="%"
+                  />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0].payload;
+                      return (
+                        <div style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }} className="border rounded-lg p-2.5 shadow-lg text-xs">
+                          <p className="font-bold text-[var(--text-primary)]">{d.source}</p>
+                          <p className="text-pink-500 font-bold mt-1">Win Rate: {d.win_rate}%</p>
+                          <p className="text-[var(--text-secondary)]">Total Inquiries: {d.total}</p>
+                          <p className="text-[var(--text-secondary)]">Enrolled Admissions: {d.converted}</p>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Bar dataKey="win_rate" name="Win Rate %" radius={[6, 6, 0, 0]} maxBarSize={42}>
+                    {adminStats.leadSourceWinRate.map((_: any, index: number) => {
+                      const COLORS = ["#ec4899", "#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#06b6d4", "#f97316"];
+                      return <Cell key={`cell-winrate-${index}`} fill={COLORS[index % COLORS.length]} />;
+                    })}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
+                <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
+                <p className="text-sm font-medium">No lead source win rate data available</p>
               </div>
             )}
           </div>

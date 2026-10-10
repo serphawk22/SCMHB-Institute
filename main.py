@@ -7262,13 +7262,27 @@ def dashboard_stats(
     all_leads = session.exec(select(Lead)).all()
     lead_stage_counts = {}
     lead_source_counts = {}
+    lead_source_stats = {}
     for l in all_leads:
         st = l.status or "New"
         lead_stage_counts[st] = lead_stage_counts.get(st, 0) + 1
-        src = l.source or "Direct / Walk-in"
+        src = l.source or "Website"
         lead_source_counts[src] = lead_source_counts.get(src, 0) + 1
+        b = lead_source_stats.setdefault(src, {"total": 0, "converted": 0})
+        b["total"] += 1
+        if l.is_converted or l.converted_student_id or st == "Converted":
+            b["converted"] += 1
     lead_stage_pie = [{"name": k, "value": v} for k, v in sorted(lead_stage_counts.items(), key=lambda x: -x[1])]
     lead_source_pie = [{"name": k, "value": v} for k, v in sorted(lead_source_counts.items(), key=lambda x: -x[1])]
+    lead_source_win_rate = [
+        {
+            "source": k,
+            "total": v["total"],
+            "converted": v["converted"],
+            "win_rate": round((v["converted"] / v["total"]) * 100, 1) if v["total"] > 0 else 0.0,
+        }
+        for k, v in sorted(lead_source_stats.items(), key=lambda x: -x[1]["total"])
+    ]
 
     all_enrollments = session.exec(select(Enrollment)).all()
     all_courses = session.exec(select(Course)).all()
@@ -7381,6 +7395,7 @@ def dashboard_stats(
         ],
         "leadStagePie": lead_stage_pie,
         "leadSourcePie": lead_source_pie,
+        "leadSourceWinRate": lead_source_win_rate,
         "coursePie": course_pie,
         "revenueHealthPie": revenue_health_pie,
         "salesWorkload": sales_workload,
@@ -11069,6 +11084,19 @@ class LeadDemoUpdateRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class LeadWalkInCreateRequest(BaseModel):
+    scheduled_at: datetime
+    location: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LeadWalkInUpdateRequest(BaseModel):
+    scheduled_at: Optional[datetime] = None
+    status: Optional[str] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class BackgroundDetailsUpdateRequest(BaseModel):
     details: Dict[str, str]
 
@@ -11134,18 +11162,21 @@ def get_leads(owner_id: Optional[int] = None, session: Session = Depends(get_ses
     _owner_names = {}
     if _owner_ids:
         _owner_names = {u.id: u.name for u in session.exec(select(User).where(User.id.in_(_owner_ids))).all()}
-    _next_fu, _next_demo = {}, {}
+    _next_fu, _next_demo, _next_walkin = {}, {}, {}
     if _lead_ids:
         _now = datetime.utcnow()
         for fu in session.exec(select(LeadFollowUp).where(LeadFollowUp.lead_id.in_(_lead_ids), LeadFollowUp.status == "Pending").order_by(LeadFollowUp.scheduled_at)).all():
             _next_fu.setdefault(fu.lead_id, fu.scheduled_at.isoformat())
         for dm in session.exec(select(LeadDemoSession).where(LeadDemoSession.lead_id.in_(_lead_ids), LeadDemoSession.status == "Scheduled").order_by(LeadDemoSession.scheduled_at)).all():
             _next_demo.setdefault(dm.lead_id, dm.scheduled_at.isoformat())
+        for wk in session.exec(select(LeadWalkIn).where(LeadWalkIn.lead_id.in_(_lead_ids), LeadWalkIn.status == "Scheduled").order_by(LeadWalkIn.scheduled_at)).all():
+            _next_walkin.setdefault(wk.lead_id, wk.scheduled_at.isoformat())
     for lead in leads:
         lead_item = lead.dict()
         lead_item["owner_name"] = _owner_names.get(lead.owner_id)
         lead_item["next_followup_at"] = _next_fu.get(lead.id)
         lead_item["next_demo_at"] = _next_demo.get(lead.id)
+        lead_item["next_walkin_at"] = _next_walkin.get(lead.id)
         if lead.course_interest_id:
             course = session.get(Course, lead.course_interest_id)
             if course:
@@ -11779,18 +11810,38 @@ def update_lead_demo_session(demo_session_id: int, body: LeadDemoUpdateRequest, 
     lead = session.get(Lead, demo.lead_id)
     _require_lead_demo_access(lead, actor)
     data = body.dict(exclude_unset=True)
-    if data.get("status") not in (None, "Scheduled", "Attended", "Missed", "Cancelled"):
-        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Missed, or Cancelled")
+    if data.get("status") not in (None, "Scheduled", "Attended", "Missed", "Not Attended", "Cancelled"):
+        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Missed, Not Attended, or Cancelled")
     for key, value in data.items():
         setattr(demo, key, value)
     demo.updated_at = datetime.utcnow()
     session.add(demo)
+    if data.get("status") in ("Missed", "Not Attended"):
+        lead.status = "Demo Not Attended"
+        session.add(lead)
+    elif data.get("status") == "Attended":
+        lead.status = "Demo"
+        session.add(lead)
     session.commit()
     session.refresh(demo)
     return {"demo_session": _lead_demo_dict(demo)}
 
 
-LEAD_STAGES = ["New", "Contacted", "Not Responded", "Follow-up", "Demo", "Converted", "Lost"]
+LEAD_STAGES = [
+    "New",
+    "Contacted",
+    "Not Responded",
+    "Follow-up",
+    "Demo",
+    "Demo Not Attended",
+    "Webinar Attended",
+    "Webinar Not Attended",
+    "Walk-in Scheduled",
+    "Walk-in Attended",
+    "Walk-in Not Attended",
+    "Converted",
+    "Lost",
+]
 _SALES_SCOPED_ROLES = ("Employee", "Intern", "SalesManager", "Sales", "Demo")
 _LEAD_SCHEDULE_ROLES = ["Admin", "Employee", "Intern", "SalesManager", "Sales", "Demo"]
 
@@ -11867,6 +11918,66 @@ def update_lead_followup(follow_up_id: int, body: LeadFollowUpUpdateRequest, ses
     return {"follow_up": _lead_followup_dict(fu)}
 
 
+def _lead_walkin_dict(wk: LeadWalkIn):
+    return {
+        "id": wk.id,
+        "lead_id": wk.lead_id,
+        "scheduled_at": wk.scheduled_at.isoformat(),
+        "status": wk.status,
+        "location": wk.location,
+        "notes": wk.notes,
+        "created_at": wk.created_at.isoformat(),
+    }
+
+
+@app.post("/leads/{lead_id}/walk-ins")
+def schedule_lead_walkin(lead_id: int, body: LeadWalkInCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    lead = session.get(Lead, lead_id)
+    _require_lead_schedule_access(lead, actor)
+    wk = LeadWalkIn(
+        tenant_id=lead.tenant_id or actor.tenant_id,
+        lead_id=lead_id,
+        scheduled_at=body.scheduled_at,
+        location=(body.location or "").strip() or None,
+        notes=(body.notes or "").strip() or None,
+        created_by=actor.id,
+        status="Scheduled",
+    )
+    lead.status = "Walk-in Scheduled"
+    session.add(wk)
+    session.add(lead)
+    session.commit()
+    session.refresh(wk)
+    return {"walk_in": _lead_walkin_dict(wk)}
+
+
+@app.patch("/lead-walk-ins/{walk_in_id}")
+def update_lead_walkin(walk_in_id: int, body: LeadWalkInUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    wk = session.get(LeadWalkIn, walk_in_id)
+    if not wk:
+        raise HTTPException(status_code=404, detail="Walk-in record not found")
+    lead = session.get(Lead, wk.lead_id)
+    _require_lead_schedule_access(lead, actor)
+    data = body.dict(exclude_unset=True)
+    if data.get("status") not in (None, "Scheduled", "Attended", "Not Attended", "Missed", "Cancelled"):
+        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Not Attended, Missed, or Cancelled")
+    for key, value in data.items():
+        setattr(wk, key, value)
+    wk.updated_at = datetime.utcnow()
+    session.add(wk)
+    if data.get("status") == "Attended":
+        lead.status = "Walk-in Attended"
+        session.add(lead)
+    elif data.get("status") in ("Not Attended", "Missed"):
+        lead.status = "Walk-in Not Attended"
+        session.add(lead)
+    session.commit()
+    session.refresh(wk)
+    return {"walk_in": _lead_walkin_dict(wk)}
+
+
 @app.patch("/leads/{lead_id}/status")
 def update_lead_stage(lead_id: int, body: LeadStatusRequest, session: Session = Depends(get_session)):
     actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
@@ -11938,11 +12049,91 @@ def get_upcoming_schedule(kind: str = "all", include_done: bool = False, session
             dq = dq.where(LeadDemoSession.status == "Scheduled")
         for dm in session.exec(dq).all():
             items.append({**_base(leads[dm.lead_id]), "id": dm.id, "type": "demo", "scheduled_at": dm.scheduled_at.isoformat(),
-                          "status": dm.status, "notes": dm.notes, "meeting_url": dm.meeting_url, "_ts": dm.scheduled_at})
+                          "status": dm.status, "notes": dm.notes, "meeting_url": dm.meeting_url, "location": None, "_ts": dm.scheduled_at})
+    if kind in ("all", "walkin"):
+        wq = select(LeadWalkIn).where(LeadWalkIn.lead_id.in_(lead_ids))
+        if not include_done:
+            wq = wq.where(LeadWalkIn.status == "Scheduled")
+        for wk in session.exec(wq).all():
+            items.append({**_base(leads[wk.lead_id]), "id": wk.id, "type": "walkin", "scheduled_at": wk.scheduled_at.isoformat(),
+                          "status": wk.status, "notes": wk.notes, "meeting_url": None, "location": wk.location, "_ts": wk.scheduled_at})
     items.sort(key=lambda i: i["_ts"])
     for i in items:
         i.pop("_ts", None)
     return {"items": items}
+
+
+@app.get("/leads/sources/analytics")
+def get_lead_sources_analytics(session: Session = Depends(get_session)):
+    """Comprehensive analytics on lead sources: counts, conversions, win rate %, and recent inquiries."""
+    actor = _require_roles(session, ["Admin", "SalesManager", "Employee", "Intern", "Demo", "Sales"])
+    lead_q = select(Lead)
+    if _normalize_role(actor.role) in _SALES_SCOPED_ROLES:
+        lead_q = lead_q.where(Lead.owner_id == actor.id)
+    tenant_id = current_tenant_id.get()
+    if tenant_id and tenant_id != 1:
+        lead_q = lead_q.where(Lead.tenant_id == tenant_id)
+
+    leads = session.exec(lead_q.order_by(Lead.created_at.desc())).all()
+    total_leads = len(leads)
+
+    source_buckets = {}
+    for l in leads:
+        src = (l.source or "Website").strip() or "Website"
+        b = source_buckets.setdefault(src, {"total": 0, "converted": 0, "lost": 0, "active": 0})
+        b["total"] += 1
+        is_conv = bool(l.is_converted or l.converted_student_id or (l.status or "") == "Converted")
+        is_lost = bool((l.status or "").lower() == "lost")
+        if is_conv:
+            b["converted"] += 1
+        elif is_lost:
+            b["lost"] += 1
+        else:
+            b["active"] += 1
+
+    sources_list = []
+    for src, b in sorted(source_buckets.items(), key=lambda x: -x[1]["total"]):
+        wr = round((b["converted"] / b["total"]) * 100, 1) if b["total"] > 0 else 0.0
+        share = round((b["total"] / total_leads) * 100, 1) if total_leads > 0 else 0.0
+        sources_list.append({
+            "source": src,
+            "total": b["total"],
+            "converted": b["converted"],
+            "lost": b["lost"],
+            "active": b["active"],
+            "win_rate": wr,
+            "inquiry_share": share,
+        })
+
+    total_converted = sum(b["converted"] for b in source_buckets.values())
+    total_lost = sum(b["lost"] for b in source_buckets.values())
+    overall_win_rate = round((total_converted / total_leads) * 100, 1) if total_leads > 0 else 0.0
+
+    best_source = max(sources_list, key=lambda s: (s["win_rate"], s["converted"]))["source"] if sources_list else None
+
+    recent = []
+    for l in leads[:25]:
+        recent.append({
+            "id": l.id,
+            "company_name": l.company_name,
+            "source": l.source or "Website",
+            "status": l.status or "New",
+            "is_converted": bool(l.is_converted or l.converted_student_id),
+            "website": l.website,
+            "created_at": l.created_at.isoformat() if l.created_at else None,
+        })
+
+    return {
+        "summary": {
+            "total_leads": total_leads,
+            "total_converted": total_converted,
+            "total_lost": total_lost,
+            "overall_win_rate": overall_win_rate,
+            "best_source": best_source,
+        },
+        "sources": sources_list,
+        "recent": recent,
+    }
 
 
 @app.patch("/leads/{lead_id}/background-details")
@@ -18031,7 +18222,7 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
 # TRAINING INSTITUTE API ENDPOINTS
 # ============================================================
 
-from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp
+from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn
 
 # --- Create tables on startup (migration) ---
 def _create_institute_tables():
@@ -18039,7 +18230,7 @@ def _create_institute_tables():
     from database import engine
     inspector = inspect(engine)
     existing = inspector.get_table_names()
-    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp]
+    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn]
     from sqlmodel import SQLModel
     for model in tables_to_create:
         if model.__tablename__ not in existing:

@@ -2,14 +2,15 @@
 
 import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarClock, Loader2, Video, PhoneCall, X } from "lucide-react";
+import { CalendarClock, Loader2, Video, PhoneCall, MapPin, X } from "lucide-react";
 
-export type ScheduleType = "followup" | "demo";
+export type ScheduleType = "followup" | "demo" | "walkin";
 
 export interface SchedulePayload {
   scheduled_at: string;
   notes: string;
   meeting_url: string;
+  location?: string;
 }
 
 interface LeadScheduleModalProps {
@@ -38,12 +39,20 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
   const [when, setWhen] = useState(initial?.scheduled_at ? initial.scheduled_at.slice(0, 16) : defaultDateTime());
   const [notes, setNotes] = useState(initial?.notes || "");
   const [url, setUrl] = useState(initial?.meeting_url || "");
+  const [location, setLocation] = useState(initial?.location || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const isDemo = type === "demo";
-  const Icon = isDemo ? Video : PhoneCall;
-  const accent = isDemo ? "from-fuchsia-500 to-violet-600" : "from-amber-500 to-orange-600";
+  const isWalkIn = type === "walkin";
+  const Icon = isDemo ? Video : isWalkIn ? MapPin : PhoneCall;
+  const accent = isDemo
+    ? "from-fuchsia-500 to-violet-600"
+    : isWalkIn
+    ? "from-sky-500 to-indigo-600"
+    : "from-amber-500 to-orange-600";
+
+  const modalTitle = isDemo ? "Schedule a demo" : isWalkIn ? "Schedule a walk-in" : "Schedule a follow-up";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,7 +60,12 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
     setSaving(true);
     setError("");
     try {
-      await onSubmit({ scheduled_at: when, notes: notes.trim(), meeting_url: url.trim() });
+      await onSubmit({
+        scheduled_at: when,
+        notes: notes.trim(),
+        meeting_url: url.trim(),
+        location: location.trim(),
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save the schedule.");
       setSaving(false);
@@ -73,7 +87,7 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
           <div className="flex items-center gap-3">
             <div className="rounded-xl bg-white/20 p-2"><Icon className="h-5 w-5" /></div>
             <div>
-              <h2 className="text-base font-bold">{isDemo ? "Schedule a demo" : "Schedule a follow-up"}</h2>
+              <h2 className="text-base font-bold">{modalTitle}</h2>
               <p className="text-xs text-white/80">{leadName}</p>
             </div>
           </div>
@@ -91,6 +105,16 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
             />
           </label>
 
+          {isWalkIn && (
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              <span className="mb-1.5 flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Campus / Branch location (optional)</span>
+              <input
+                value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Main Campus / Reception"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium normal-case tracking-normal text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+              />
+            </label>
+          )}
+
           {isDemo && (
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               <span className="mb-1.5 block">Meeting link (optional)</span>
@@ -105,7 +129,7 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
             <span className="mb-1.5 block">Notes (optional)</span>
             <textarea
               rows={3} value={notes} onChange={e => setNotes(e.target.value)}
-              placeholder={isDemo ? "Topics to cover, who will attend…" : "What to discuss on the call…"}
+              placeholder={isDemo ? "Topics to cover, who will attend…" : isWalkIn ? "Counselor name, documents to bring…" : "What to discuss on the call…"}
               className="w-full resize-none rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium normal-case tracking-normal text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
             />
           </label>
@@ -121,7 +145,7 @@ export default function LeadScheduleModal({ type, leadName, initial, submitLabel
           <button type="submit" disabled={saving}
             className={`flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r ${accent} py-2.5 text-sm font-semibold text-white shadow-md hover:opacity-90 disabled:opacity-50`}>
             {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {submitLabel || (isDemo ? "Schedule demo" : "Schedule follow-up")}
+            {submitLabel || (isDemo ? "Schedule demo" : isWalkIn ? "Schedule walk-in" : "Schedule follow-up")}
           </button>
         </div>
       </motion.form>

@@ -6,17 +6,17 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   CalendarClock, CalendarCheck, Video, PhoneCall, Phone, Mail, UserRound, Loader2, Check,
-  RotateCcw, XCircle, ExternalLink, AlertTriangle, GraduationCap, ArrowUpRight,
+  RotateCcw, XCircle, ExternalLink, AlertTriangle, GraduationCap, ArrowUpRight, MapPin, UserX,
 } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import LeadScheduleModal, { SchedulePayload } from "@/components/LeadScheduleModal";
 
-type Kind = "all" | "demo" | "followup";
+type Kind = "all" | "demo" | "followup" | "walkin";
 
 interface ScheduleItem {
   id: number;
-  type: "demo" | "followup";
+  type: "demo" | "followup" | "walkin";
   lead_id: number;
   lead_name: string;
   phone?: string | null;
@@ -28,6 +28,7 @@ interface ScheduleItem {
   status: string;
   notes?: string | null;
   meeting_url?: string | null;
+  location?: string | null;
 }
 
 const GROUPS = ["Overdue", "Today", "Tomorrow", "This week", "Later"] as const;
@@ -120,12 +121,16 @@ export default function SchedulePage() {
     all: items.length,
     demo: items.filter(i => i.type === "demo").length,
     followup: items.filter(i => i.type === "followup").length,
+    walkin: items.filter(i => i.type === "walkin").length,
     today: items.filter(i => groupOf(i.scheduled_at) === "Today").length,
     overdue: items.filter(i => groupOf(i.scheduled_at) === "Overdue").length,
   }), [items]);
 
-  const endpoint = (item: ScheduleItem) =>
-    item.type === "demo" ? `${API_BASE_URL}/lead-demo-sessions/${item.id}` : `${API_BASE_URL}/lead-follow-ups/${item.id}`;
+  const endpoint = (item: ScheduleItem) => {
+    if (item.type === "demo") return `${API_BASE_URL}/lead-demo-sessions/${item.id}`;
+    if (item.type === "walkin") return `${API_BASE_URL}/lead-walk-ins/${item.id}`;
+    return `${API_BASE_URL}/lead-follow-ups/${item.id}`;
+  };
 
   const patch = async (item: ScheduleItem, body: Record<string, unknown>) => {
     const res = await fetch(endpoint(item), {
@@ -137,12 +142,20 @@ export default function SchedulePage() {
     }
   };
 
-  const act = async (item: ScheduleItem, kindOfAction: "done" | "cancel") => {
-    if (kindOfAction === "cancel" && !confirm(`Cancel this ${item.type === "demo" ? "demo" : "follow-up"} for ${item.lead_name}?`)) return;
+  const act = async (item: ScheduleItem, kindOfAction: "done" | "not_attended" | "cancel") => {
+    const itemLabel = item.type === "demo" ? "demo" : item.type === "walkin" ? "walk-in" : "follow-up";
+    if (kindOfAction === "cancel" && !confirm(`Cancel this ${itemLabel} for ${item.lead_name}?`)) return;
     const key = `${item.type}-${item.id}`;
     setBusyKey(key);
     try {
-      const status = kindOfAction === "done" ? (item.type === "demo" ? "Attended" : "Done") : "Cancelled";
+      let status = "Done";
+      if (kindOfAction === "not_attended") {
+        status = "Not Attended";
+      } else if (kindOfAction === "cancel") {
+        status = "Cancelled";
+      } else if (kindOfAction === "done") {
+        status = (item.type === "demo" || item.type === "walkin") ? "Attended" : "Done";
+      }
       await patch(item, { status });
       await load(true);
     } catch (e) {
@@ -156,6 +169,7 @@ export default function SchedulePage() {
     if (!reschedule) return;
     const body: Record<string, unknown> = { scheduled_at: p.scheduled_at, notes: p.notes || null };
     if (reschedule.type === "demo") body.meeting_url = p.meeting_url || null;
+    if (reschedule.type === "walkin") body.location = p.location || "Campus Front Desk";
     await patch(reschedule, body);
     setReschedule(null);
     await load(true);
@@ -165,6 +179,7 @@ export default function SchedulePage() {
     { id: "all", label: "All", count: counts.all },
     { id: "demo", label: "Demos", count: counts.demo },
     { id: "followup", label: "Follow-ups", count: counts.followup },
+    { id: "walkin", label: "Walk-ins", count: counts.walkin },
   ];
 
   return (
@@ -172,13 +187,13 @@ export default function SchedulePage() {
       <div className="border-b border-slate-200 bg-white px-6 py-5 dark:border-slate-800 dark:bg-black">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="rounded-xl bg-gradient-to-br from-amber-500 to-fuchsia-600 p-2.5 text-white shadow-md">
+            <div className="rounded-xl bg-gradient-to-br from-amber-500 via-fuchsia-600 to-sky-600 p-2.5 text-white shadow-md">
               <CalendarClock className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Follow-ups &amp; Demos</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Important Dates</h1>
               <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-                {isAdmin ? "Everything scheduled across the sales team" : "Everything scheduled for your leads"} · nearest first
+                {isAdmin ? "Everything scheduled across the sales team" : "Everything scheduled for your leads"} · Follow-ups, Demos &amp; Walk-ins · nearest first
               </p>
             </div>
           </div>
@@ -192,12 +207,13 @@ export default function SchedulePage() {
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
           {[
             { label: "Overdue", value: counts.overdue, color: "text-red-600", bg: "bg-red-500/10" },
             { label: "Today", value: counts.today, color: "text-emerald-600", bg: "bg-emerald-500/10" },
             { label: "Demos", value: counts.demo, color: "text-fuchsia-600", bg: "bg-fuchsia-500/10" },
             { label: "Follow-ups", value: counts.followup, color: "text-amber-600", bg: "bg-amber-500/10" },
+            { label: "Walk-ins", value: counts.walkin, color: "text-sky-600", bg: "bg-sky-500/10" },
           ].map(s => (
             <div key={s.label} className={`flex items-center gap-3 rounded-xl px-4 py-3 ${s.bg}`}>
               <p className={`text-xl font-black ${s.color}`}>{loading ? "—" : s.value}</p>
@@ -222,7 +238,7 @@ export default function SchedulePage() {
             </div>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Nothing scheduled</h3>
             <p className="mt-1 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-              Move a lead to <b>Follow-up</b> or <b>Demo</b> in <Link href="/leads" className="font-semibold text-blue-600 hover:underline">Student Leads</Link> and it will show up here.
+              Move a lead to <b>Follow-up</b>, <b>Demo</b>, or <b>Walk-in Scheduled</b> in <Link href="/leads" className="font-semibold text-blue-600 hover:underline">Student Leads</Link> and it will show up here.
             </p>
           </div>
         ) : (
@@ -237,13 +253,26 @@ export default function SchedulePage() {
                   {rows.map(item => {
                     const key = `${item.type}-${item.id}`;
                     const isDemo = item.type === "demo";
+                    const isWalkIn = item.type === "walkin";
                     const overdue = group === "Overdue";
-                    const Icon = isDemo ? Video : PhoneCall;
+                    const Icon = isDemo ? Video : isWalkIn ? MapPin : PhoneCall;
                     const busy = busyKey === key;
+                    const badgeClass = isDemo
+                      ? "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300"
+                      : isWalkIn
+                      ? "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                      : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+                    const dateBgClass = overdue
+                      ? "bg-red-500/10 text-red-600"
+                      : isDemo
+                      ? "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300"
+                      : isWalkIn
+                      ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                      : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
                     return (
                       <motion.div key={key} layout initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                         className={`flex flex-wrap items-stretch gap-4 rounded-2xl border bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:bg-zinc-950 ${overdue ? "border-red-200 dark:border-red-900/60" : "border-slate-200 dark:border-slate-800"}`}>
-                        <div className={`flex w-24 shrink-0 flex-col items-center justify-center rounded-xl px-2 py-3 text-center ${overdue ? "bg-red-500/10 text-red-600" : isDemo ? "bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300" : "bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>
+                        <div className={`flex w-24 shrink-0 flex-col items-center justify-center rounded-xl px-2 py-3 text-center ${dateBgClass}`}>
                           <Icon className="mb-1 h-5 w-5" />
                           <span className="text-[11px] font-semibold uppercase">{fmtDate(item.scheduled_at)}</span>
                           <span className="text-lg font-black leading-tight">{fmtTime(item.scheduled_at)}</span>
@@ -255,13 +284,18 @@ export default function SchedulePage() {
                               {item.lead_name}
                               <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
                             </Link>
-                            <span className={`rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${isDemo ? "border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-300" : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>
-                              {isDemo ? "Demo" : "Follow-up"}
+                            <span className={`rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${badgeClass}`}>
+                              {isDemo ? "Demo" : isWalkIn ? "Walk-in" : "Follow-up"}
                             </span>
                             {overdue && <span className="rounded-md bg-red-500/10 px-2 py-0.5 text-[11px] font-bold uppercase text-red-600">Overdue</span>}
                           </div>
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-slate-500 dark:text-slate-400">
                             {item.course && <span className="inline-flex items-center gap-1"><GraduationCap className="h-3.5 w-3.5" />{item.course}</span>}
+                            {isWalkIn && item.location && (
+                              <span className="inline-flex items-center gap-1 text-sky-600 dark:text-sky-400 font-medium">
+                                <MapPin className="h-3.5 w-3.5" /> {item.location}
+                              </span>
+                            )}
                             {item.phone && <a href={`tel:${item.phone}`} className="inline-flex items-center gap-1 hover:text-blue-600"><Phone className="h-3.5 w-3.5" />{item.phone}</a>}
                             {item.email && <span className="inline-flex items-center gap-1"><Mail className="h-3.5 w-3.5" />{item.email}</span>}
                             {isAdmin && (
@@ -281,8 +315,15 @@ export default function SchedulePage() {
                           <button onClick={() => act(item, "done")} disabled={busy}
                             className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
                             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                            {isDemo ? "Attended" : "Done"}
+                            {(isDemo || isWalkIn) ? "Attended" : "Done"}
                           </button>
+                          {(isDemo || isWalkIn) && (
+                            <button onClick={() => act(item, "not_attended")} disabled={busy}
+                              title={isDemo ? "Mark demo not attended" : "Mark walk-in not attended"}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 text-xs font-bold hover:bg-rose-100 disabled:opacity-50 dark:bg-rose-950/40 dark:border-rose-900/60 dark:text-rose-300">
+                              <UserX className="h-3.5 w-3.5" /> Not Attended
+                            </button>
+                          )}
                           <button onClick={() => setReschedule(item)} disabled={busy}
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
                             <RotateCcw className="h-3.5 w-3.5" /> Reschedule
@@ -308,7 +349,7 @@ export default function SchedulePage() {
             key={`${reschedule.type}-${reschedule.id}`}
             type={reschedule.type}
             leadName={reschedule.lead_name}
-            initial={{ scheduled_at: reschedule.scheduled_at, notes: reschedule.notes || "", meeting_url: reschedule.meeting_url || "" }}
+            initial={{ scheduled_at: reschedule.scheduled_at, notes: reschedule.notes || "", meeting_url: reschedule.meeting_url || "", location: reschedule.location || "" }}
             submitLabel="Save new time"
             onClose={() => setReschedule(null)}
             onSubmit={submitReschedule}
