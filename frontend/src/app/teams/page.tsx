@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Plus, Check, X, Shield, Mail, Phone, Loader2, Briefcase, GraduationCap, Target, Ticket, CheckCircle, PlayCircle, Layers, Activity, Star, UserCog, Video } from "lucide-react";
+import { Users, Plus, Check, X, Loader2, Briefcase, GraduationCap, Target, CheckCircle, Activity, Star, UserCog, Video } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { cn } from "@/lib/utils";
 import PageGuide from "@/components/PageGuide";
@@ -107,7 +107,6 @@ export default function TeamsPage() {
   };
 
   const salesTeam = users.filter(u => ['Admin', 'SalesManager', 'Employee'].includes(u.role));
-  const devTeam = users.filter(u => ['ProjectMember', 'Intern'].includes(u.role));
 
   if (loading) {
     return (
@@ -132,90 +131,49 @@ export default function TeamsPage() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-3xl shadow-sm overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-gray-100 dark:border-zinc-800 flex justify-between items-center bg-gray-50/50 dark:bg-zinc-950/50">
-            <h3 className="font-bold text-lg text-gray-900 dark:text-zinc-50 flex items-center gap-3">
-              <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
-                <Briefcase className="w-5 h-5 text-indigo-600 dark:text-indigo-400"/>
-              </div>
-              {t("teams.sales_mgmt_team")}
-            </h3>
-            <span className="text-xs font-bold text-gray-400 bg-gray-100 dark:bg-zinc-800 px-3 py-1 rounded-full">{salesTeam.length} {t("teams.members")}</span>
-          </div>
-          <div className="divide-y divide-gray-100 dark:divide-zinc-800 flex-1">
-            {salesTeam.map(u => {
-              const metric = instituteTeam.sales.find(item => item.user_id === u.id);
-              const attended = metric?.demos_attended || 0;
-              const missed = metric?.demos_missed || 0;
-              const demoOutcomes = attended + missed;
-              return <div key={u.id} className="p-5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-950/50 transition-colors cursor-pointer"
-                onClick={() => handleUserClick(u)}>
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-black text-lg">
-                    {u.name?.charAt(0) || u.email?.charAt(0)}
-                  </div>
-                  <div>
-                    <p className="text-sm font-black text-gray-900 dark:text-zinc-50">{u.name || t("teams.unnamed")}</p>
-                    <p className="text-xs font-medium text-gray-500 dark:text-zinc-400 mt-0.5">{u.email}</p>
-                    <p className="mt-1 text-[11px] text-gray-500 dark:text-zinc-400">{metric?.leads_assigned || 0} leads · {metric?.students_enrolled || 0} enrollments · {metric?.conversion_rate || 0}% converted · INR {(metric?.revenue_collected || 0).toLocaleString("en-IN")} collected</p>
-                    <p className="mt-1 text-[11px] text-gray-500 dark:text-zinc-400">Demos: {attended} attended · {metric?.demos_scheduled || 0} scheduled · {missed} missed · {metric?.demo_to_conversion_rate || 0}% attended-demo conversion</p>
-                    <div role="img" aria-label={`${attended} demos attended and ${missed} demos missed`} className="mt-1.5 flex h-1.5 max-w-64 overflow-hidden rounded-full bg-gray-100 dark:bg-zinc-800"><span className="h-full bg-emerald-500" style={{ width: `${demoOutcomes ? attended / demoOutcomes * 100 : 0}%` }} /><span className="h-full bg-rose-500" style={{ width: `${demoOutcomes ? missed / demoOutcomes * 100 : 0}%` }} /></div>
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 rounded-lg">
-                    {u.role}
-                  </span>
-                </div>
-              </div>;
-            })}
-            {salesTeam.length === 0 && (
-              <div className="p-10 text-center flex flex-col items-center">
-                <Users className="w-10 h-10 text-gray-300 dark:text-zinc-700 mb-3" />
-                <p className="text-sm font-medium text-gray-500 dark:text-zinc-400">{t("teams.no_members")}</p>
-              </div>
-            )}
-          </div>
+      <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-3xl shadow-sm overflow-hidden flex flex-col">
+        <div className="p-6 border-b border-gray-100 dark:border-zinc-800 flex justify-between items-center bg-gray-50/50 dark:bg-zinc-950/50">
+          <h3 className="font-bold text-lg text-gray-900 dark:text-zinc-50 flex items-center gap-3">
+            <div className="p-2 bg-indigo-100 dark:bg-indigo-500/10 rounded-xl">
+              <Briefcase className="w-5 h-5 text-indigo-600 dark:text-indigo-400"/>
+            </div>
+            {t("teams.sales_mgmt_team")}
+          </h3>
+          <span className="text-xs font-bold text-gray-400 bg-gray-100 dark:bg-zinc-800 px-3 py-1 rounded-full">{salesTeam.length} {t("teams.members")}</span>
         </div>
-
-        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-3xl shadow-sm overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-gray-100 dark:border-zinc-800 flex justify-between items-center bg-gray-50/50 dark:bg-zinc-950/50">
-            <h3 className="font-bold text-lg text-gray-900 dark:text-zinc-50 flex items-center gap-3">
-              <div className="p-2 bg-emerald-100 dark:bg-emerald-500/10 rounded-xl">
-                <GraduationCap className="w-5 h-5 text-emerald-600 dark:text-emerald-400"/>
-              </div>
-              {t("teams.dev_team")}
-            </h3>
-            <span className="text-xs font-bold text-gray-400 bg-gray-100 dark:bg-zinc-800 px-3 py-1 rounded-full">{devTeam.length} {t("teams.members")}</span>
-          </div>
-          <div className="divide-y divide-gray-100 dark:divide-zinc-800 flex-1">
-            {devTeam.map(u => (
-              <div key={u.id} className="p-5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-950/50 transition-colors cursor-pointer"
-                onClick={() => handleUserClick(u)}>
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-black text-lg">
-                    {u.name?.charAt(0) || u.email?.charAt(0)}
-                  </div>
-                  <div>
-                    <p className="text-sm font-black text-gray-900 dark:text-zinc-50">{u.name || t("teams.unnamed")}</p>
-                    <p className="text-xs font-medium text-gray-500 dark:text-zinc-400 mt-0.5">{u.email}</p>
-                  </div>
+        <div className="divide-y divide-gray-100 dark:divide-zinc-800 flex-1">
+          {salesTeam.map(u => {
+            const metric = instituteTeam.sales.find(item => item.user_id === u.id);
+            const attended = metric?.demos_attended || 0;
+            const missed = metric?.demos_missed || 0;
+            const demoOutcomes = attended + missed;
+            return <div key={u.id} className="p-5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-zinc-950/50 transition-colors cursor-pointer"
+              onClick={() => handleUserClick(u)}>
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-indigo-50 dark:bg-indigo-500/10 border border-indigo-100 dark:border-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-black text-lg">
+                  {u.name?.charAt(0) || u.email?.charAt(0)}
                 </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 rounded-lg">
-                    {u.role}
-                  </span>
+                <div>
+                  <p className="text-sm font-black text-gray-900 dark:text-zinc-50">{u.name || t("teams.unnamed")}</p>
+                  <p className="text-xs font-medium text-gray-500 dark:text-zinc-400 mt-0.5">{u.email}</p>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-zinc-400">{metric?.leads_assigned || 0} leads · {metric?.students_enrolled || 0} enrollments · {metric?.conversion_rate || 0}% converted · ₹{(metric?.revenue_collected || 0).toLocaleString("en-IN")} collected</p>
+                  <p className="mt-1 text-[11px] text-gray-500 dark:text-zinc-400">Demos: {attended} attended · {metric?.demos_scheduled || 0} scheduled · {missed} missed · {metric?.demo_to_conversion_rate || 0}% attended-demo conversion</p>
+                  <div role="img" aria-label={`${attended} demos attended and ${missed} demos missed`} className="mt-1.5 flex h-1.5 max-w-64 overflow-hidden rounded-full bg-gray-100 dark:bg-zinc-800"><span className="h-full bg-emerald-500" style={{ width: `${demoOutcomes ? attended / demoOutcomes * 100 : 0}%` }} /><span className="h-full bg-rose-500" style={{ width: `${demoOutcomes ? missed / demoOutcomes * 100 : 0}%` }} /></div>
                 </div>
               </div>
-            ))}
-            {devTeam.length === 0 && (
-              <div className="p-10 text-center flex flex-col items-center">
-                <Users className="w-10 h-10 text-gray-300 dark:text-zinc-700 mb-3" />
-                <p className="text-sm font-medium text-gray-500 dark:text-zinc-400">{t("teams.no_members")}</p>
+              <div className="flex flex-col items-end gap-1">
+                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 rounded-lg">
+                  {u.role}
+                </span>
               </div>
-            )}
-          </div>
+            </div>;
+          })}
+          {salesTeam.length === 0 && (
+            <div className="p-10 text-center flex flex-col items-center">
+              <Users className="w-10 h-10 text-gray-300 dark:text-zinc-700 mb-3" />
+              <p className="text-sm font-medium text-gray-500 dark:text-zinc-400">{t("teams.no_members")}</p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -280,14 +238,9 @@ export default function TeamsPage() {
                   onChange={(e) => setRole(e.target.value)}
                   className="w-full px-6 py-4 bg-gray-50 dark:bg-zinc-950 border-none rounded-2xl text-sm font-bold focus:ring-2 focus:ring-blue-500 transition-all outline-none appearance-none"
                 >
-                  <optgroup label={t("teams.optgroup_sales")}>
-                    <option value="Admin">Admin</option>
-                    <option value="SalesManager">{t("teams.opt_sales_manager")}</option>
-                  </optgroup>
-                  <optgroup label={t("teams.optgroup_dev")}>
-                    <option value="ProjectMember">{t("teams.opt_project_member")}</option>
-                    <option value="Intern">{t("teams.opt_intern")}</option>
-                  </optgroup>
+                  <option value="Admin">Admin</option>
+                  <option value="SalesManager">{t("teams.opt_sales_manager")}</option>
+                  <option value="Employee">Employee</option>
                 </select>
               </div>
 

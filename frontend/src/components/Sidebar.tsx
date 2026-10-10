@@ -76,7 +76,6 @@ const defaultSidebarSections = [
       { id: "item-students", name: "Students", icon: "GraduationCap", href: "/students", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
       { id: "item-enrollments", name: "Enrollments & Slips", icon: "FileText", href: "/enrollments", roles: ["Admin", "Demo", "SalesManager"] },
       { id: "item-instructors", name: "Instructors", icon: "UserCog", href: "/instructors", roles: ["Admin", "Demo"] },
-      { id: "item-institute-analytics", name: "Institute Analytics", icon: "BarChart2", href: "/institute-analytics", roles: ["Admin", "Demo", "SalesManager"] },
     ],
   },
   {
@@ -415,7 +414,9 @@ export function Sidebar({ role }: SidebarProps) {
                 i.id !== "item-deals" &&
                 i.href !== "/pipeline" &&
                 i.id !== "item-meetings" &&
-                i.href !== "/meetings"),
+                i.href !== "/meetings" &&
+                i.id !== "item-institute-analytics" &&
+                i.href !== "/institute-analytics"),
             });
             const mergedSectionsClean = mergedSections.map(stripDisabled);
             

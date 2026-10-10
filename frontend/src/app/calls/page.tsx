@@ -287,6 +287,132 @@ function CallDetailPanel({ call, onSave }: { call: CallEntry; onSave: () => void
   );
 }
 
+function AnimatedAgentFace({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
+  const isLg = size === "lg";
+  return (
+    <div className="relative flex items-center justify-center shrink-0">
+      {/* Outer pulsing glow */}
+      <motion.div
+        animate={{ scale: [1, 1.25, 1], opacity: [0.35, 0.08, 0.35] }}
+        transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+        className="absolute -inset-3 rounded-full bg-gradient-to-r from-violet-500 to-indigo-500 blur-md pointer-events-none"
+      />
+
+      {/* Head container */}
+      <div className={cn(
+        "relative rounded-3xl bg-gradient-to-br from-violet-600 via-indigo-600 to-purple-700 p-1 shadow-2xl shadow-indigo-500/30 border border-white/20 flex flex-col items-center justify-center overflow-hidden",
+        isLg ? "w-28 h-28" : "w-20 h-20"
+      )}>
+        {/* Subtle glass reflection */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-white/30 via-transparent to-black/30 pointer-events-none" />
+
+        {/* Headphones on sides */}
+        <div className="absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-7 bg-slate-900 rounded-r-md border border-white/20 shadow-inner" />
+        <div className="absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-7 bg-slate-900 rounded-l-md border border-white/20 shadow-inner" />
+
+        {/* Antenna with pulsing cyan light */}
+        <div className="absolute -top-1 left-1/2 -translate-x-1/2 flex flex-col items-center">
+          <motion.div
+            animate={{ scale: [1, 1.4, 1], opacity: [0.8, 1, 0.8] }}
+            transition={{ duration: 1.2, repeat: Infinity }}
+            className="w-2.5 h-2.5 rounded-full bg-cyan-300 shadow-[0_0_10px_#22d3ee]"
+          />
+        </div>
+
+        {/* Glowing expressive eyes with natural blink */}
+        <div className={cn("flex items-center mt-1.5", isLg ? "gap-4" : "gap-3")}>
+          <motion.div
+            animate={{ scaleY: [1, 1, 0.1, 1, 1, 1] }}
+            transition={{ duration: 3.2, repeat: Infinity, times: [0, 0.45, 0.48, 0.52, 0.9, 1] }}
+            className={cn("rounded-full bg-cyan-300 shadow-[0_0_12px_#38bdf8] flex items-center justify-center", isLg ? "w-4 h-4" : "w-3 h-3")}
+          >
+            <div className="w-1 h-1 rounded-full bg-white" />
+          </motion.div>
+          <motion.div
+            animate={{ scaleY: [1, 1, 0.1, 1, 1, 1] }}
+            transition={{ duration: 3.2, repeat: Infinity, times: [0, 0.45, 0.48, 0.52, 0.9, 1] }}
+            className={cn("rounded-full bg-cyan-300 shadow-[0_0_12px_#38bdf8] flex items-center justify-center", isLg ? "w-4 h-4" : "w-3 h-3")}
+          >
+            <div className="w-1 h-1 rounded-full bg-white" />
+          </motion.div>
+        </div>
+
+        {/* Smiling digital LED mouth */}
+        <div className="mt-2 flex items-center justify-center">
+          <motion.div
+            animate={{ width: isLg ? ["18px", "24px", "18px"] : ["14px", "18px", "14px"] }}
+            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+            className="h-1 rounded-full bg-cyan-300/90 shadow-[0_0_8px_#38bdf8]"
+          />
+        </div>
+
+        {/* Animated Soundwave Equalizer */}
+        <div className="flex items-end gap-1 mt-1.5">
+          {[8, 14, 10, 16, 9].map((h, i) => (
+            <motion.div
+              key={i}
+              animate={{ height: [`${Math.max(3, h * 0.3)}px`, `${h}px`, `${Math.max(3, h * 0.4)}px`] }}
+              transition={{ duration: 0.7 + i * 0.12, repeat: Infinity, ease: "easeInOut" }}
+              className="w-1 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399]"
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CallingAgentLiveBanner() {
+  return (
+    <motion.div
+      variants={itemVariants}
+      className="relative overflow-hidden rounded-3xl border border-indigo-200/80 dark:border-indigo-900/60 bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-950 p-6 sm:p-7 text-white shadow-xl shadow-indigo-950/20"
+    >
+      <div className="pointer-events-none absolute -top-24 -right-24 w-72 h-72 rounded-full bg-violet-600/20 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-24 -left-24 w-72 h-72 rounded-full bg-indigo-600/20 blur-3xl" />
+
+      <div className="relative flex flex-col md:flex-row items-center gap-6 sm:gap-8 justify-between">
+        <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-5 flex-1">
+          <AnimatedAgentFace size="md" />
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-[11px] font-black tracking-wider uppercase">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                Live Status: Calling Agent In Final Training
+              </span>
+              <span className="text-xs text-indigo-200/70 font-semibold">• Autonomous Voice Counselor</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
+              Calling agent will be live soon, stay tuned!
+            </h2>
+            <p className="text-xs sm:text-sm text-indigo-100/80 max-w-2xl leading-relaxed">
+              Our intelligent conversational AI voice counselor is preparing for live deployment. Soon, it will autonomously call prospective students, qualify course interests, confirm webinar attendance, and synchronize transcripts directly to your CRM.
+            </p>
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1 text-[11px] font-bold text-indigo-200">
+              <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5">
+                🎙️ Natural Indian English & Regional Dialects
+              </span>
+              <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5">
+                ⚡ Auto Webinar Attendance Confirmation
+              </span>
+              <span className="bg-white/10 px-2.5 py-1 rounded-lg border border-white/10 flex items-center gap-1.5">
+                📝 Instant CRM Summary &amp; Recording
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="shrink-0 flex flex-col items-center sm:items-end gap-2">
+          <div className="px-4 py-2.5 rounded-2xl bg-white/10 border border-white/15 backdrop-blur-md text-center">
+            <p className="text-[10px] font-black uppercase tracking-wider text-indigo-300">Phase 2 Voice AI</p>
+            <p className="text-sm font-extrabold text-cyan-300">Deployment Ready</p>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 export default function CallsPage() {
   const { t } = useLanguage();
   const [activeTab, setActiveTab] = useState<"logged" | "scheduled" | "ai-calls">("logged");
@@ -548,7 +674,6 @@ export default function CallsPage() {
     fetchAll();
   };
 
-
   return (
     <>
       <ToastContainer toasts={toasts} onRemove={removeToast} />
@@ -577,6 +702,9 @@ export default function CallsPage() {
             </button>
           </div>
         </motion.div>
+
+        {/* LIVE COMING SOON CALLING AGENT BANNER */}
+        <CallingAgentLiveBanner />
 
         {/* Tabs */}
         <motion.div variants={itemVariants} className="flex bg-slate-100 dark:bg-zinc-900 p-1 rounded-2xl w-fit">
