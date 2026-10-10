@@ -76,6 +76,7 @@ from database import (
     AnalyticsData,
     CallLog,
     Case,
+    Course,
     ScheduledCall,
     ChatMessage,
     ChatbotSession,
@@ -11037,6 +11038,22 @@ class LeadCreateRequest(BaseModel):
     owner_id: Optional[int] = None
     status: str = "New"
     notes: Optional[str] = None
+    background_details: Optional[Dict[str, Any]] = None
+
+
+class WebsiteLeadIntakeRequest(BaseModel):
+    name: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    course: Optional[str] = None
+    course_interest_id: Optional[int] = None
+    source_page: Optional[str] = None
+    page_title: Optional[str] = None
+    form_name: Optional[str] = None
+    message: Optional[str] = None
+    notes: Optional[str] = None
+    tenant_id: Optional[int] = None
+    api_key: Optional[str] = None
 
 
 class LeadDemoCreateRequest(BaseModel):
@@ -11294,6 +11311,123 @@ def create_lead(body: LeadCreateRequest, session: Session = Depends(get_session)
         print(f"AutoResearch trigger error for lead {lead.id}: {e}")
         
     return lead
+    
+
+@app.post("/leads/intake")
+def intake_website_lead(
+    body: WebsiteLeadIntakeRequest,
+    request: Request,
+    session: Session = Depends(get_session)
+):
+    """
+    Public webhook/API endpoint for external websites (PHP, WordPress, etc.).
+    Receives incoming form inquiries, sets source to 'Website', records the exact page URL,
+    matches courses, and notifies team members.
+    """
+    target_tenant_id = body.tenant_id
+    if not target_tenant_id:
+        t_header = request.headers.get("X-Tenant-ID")
+        if t_header and t_header.isdigit():
+            target_tenant_id = int(t_header)
+        else:
+            target_tenant_id = 1
+
+    configured_key = os.getenv("LEAD_INTAKE_API_KEY")
+    if configured_key:
+        req_key = body.api_key or request.headers.get("X-API-Key")
+        if req_key != configured_key:
+            raise HTTPException(status_code=401, detail="Invalid API key for lead intake")
+
+    # Match course by ID or name
+    matched_course_id = body.course_interest_id
+    matched_industry = None
+    if not matched_course_id and body.course:
+        course_name = body.course.strip()
+        matched = session.exec(select(Course).where(func.lower(Course.title) == course_name.lower())).first()
+        if not matched:
+            matched = session.exec(select(Course).where(Course.title.ilike(f"%{course_name}%"))).first()
+        if matched:
+            matched_course_id = matched.id
+            matched_industry = matched.category
+        else:
+            matched_industry = course_name
+
+    # Build human-readable notes detailing the source page and form
+    note_lines = []
+    if body.form_name:
+        note_lines.append(f"Form: {body.form_name}")
+    if body.page_title:
+        note_lines.append(f"Page Title: {body.page_title}")
+    if body.source_page:
+        note_lines.append(f"Page URL: {body.source_page}")
+    user_msg = (body.message or body.notes or "").strip()
+    if user_msg:
+        note_lines.append(f"Message: {user_msg}")
+    combined_notes = "\n".join(note_lines) if note_lines else None
+
+    # Capture structured background details
+    bg_details = {}
+    if body.source_page:
+        bg_details["source_page"] = body.source_page
+    if body.page_title:
+        bg_details["page_title"] = body.page_title
+    if body.form_name:
+        bg_details["form_name"] = body.form_name
+    if body.course:
+        bg_details["submitted_course"] = body.course
+    referrer = request.headers.get("referer") or request.headers.get("referrer")
+    if referrer and "source_page" not in bg_details:
+        bg_details["referrer"] = referrer
+
+    lead_website = (body.source_page or "").strip() or (referrer or None)
+
+    lead = Lead(
+        company_name=body.name.strip(),
+        email=(body.email or "").strip() or None,
+        phone=(body.phone or "").strip() or None,
+        source="Website",
+        website=lead_website,
+        status="New",
+        course_interest_id=matched_course_id,
+        industry=matched_industry,
+        notes=combined_notes,
+        background_details=bg_details if bg_details else None,
+        tenant_id=target_tenant_id,
+    )
+
+    session.add(lead)
+    session.commit()
+    session.refresh(lead)
+
+    try:
+        page_info = body.page_title or body.source_page or "Website"
+        _notify_admins(
+            session, target_tenant_id,
+            title=f"🎯 New Website Lead: {lead.company_name}",
+            message=f"From: {page_info} | Phone: {lead.phone or 'N/A'}",
+            notif_type="info",
+            link=f"/leads/{lead.id}"
+        )
+    except Exception:
+        pass
+
+    try:
+        from modules.whatsapp import send_ai_polished_whatsapp_message
+        base_url = "https://crm-seo.allytechcourses.com"
+        send_ai_polished_whatsapp_message("New Lead Added", lead.dict(), f"{base_url}/leads/{lead.id}")
+    except Exception as e:
+        print("WhatsApp Error:", e)
+
+    return {
+        "ok": True,
+        "lead_id": lead.id,
+        "name": lead.company_name,
+        "source": lead.source,
+        "source_page": lead.website,
+        "course_interest_id": lead.course_interest_id,
+        "message": "Lead received successfully"
+    }
+
 
 @app.get("/leads/{lead_id}")
 def get_lead(lead_id: int, session: Session = Depends(get_session)):
