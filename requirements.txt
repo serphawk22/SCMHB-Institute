@@ -36,3 +36,10 @@ google-api-python-client>=2.90.0
 # Duplicates removed
 pandas>=2.0.0
 openpyxl>=3.1.0
+
+# HTML sanitization (inbound email reply rendering)
+bleach==6.4.0
+tinycss2==1.5.1
+
+# Email Integration — at-rest encryption for per-user app passwords (Fernet)
+cryptography==50.0.2

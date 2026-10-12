@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
+import type { Variants } from "framer-motion";
 import { Users, Send, Briefcase, Target, Activity, Phone, GraduationCap, ArrowUpRight, CheckCircle2, TrendingUp, DollarSign, Timer, AlertTriangle, Sparkles, Loader2, Printer, Plus, ChevronUp, ChevronDown, Bot, X, MapPin, Zap, Mail, Globe, Trophy, Lightbulb, BarChart2, FolderKanban, UserCheck, Calendar, PieChart as PieChartIcon, FileText, IndianRupee, CalendarClock } from "lucide-react";
 import Link from "next/link";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell, RadialBarChart, RadialBar } from "recharts";
@@ -11,6 +12,7 @@ import { API_BASE_URL } from "@/config";
 import { useRole } from "@/context/RoleContext";
 import { useLanguage } from "@/context/LanguageContext";
 import { ShieldAlert, LockKeyhole } from "lucide-react";
+import FollowUpsWidget from "@/components/followups/FollowUpsWidget";
 
 // ─── Agent Data Pretty Viewer ──────────────────────────────────────────────────
 function AgentDataViewer({ data, overview }: { data?: string | null; overview?: string | null }) {
@@ -122,7 +124,7 @@ function AgentDataViewer({ data, overview }: { data?: string | null; overview?: 
 }
 
 // Data comes from adminStats from the backend
-const itemVariants: any = {
+const itemVariants: Variants = {
   hidden: { opacity: 0, y: 20 },
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100 } }
 };
@@ -401,6 +403,11 @@ export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any)
           </motion.div>
         ))}
       </div>
+
+      {/* FOLLOW-UPS: pending / overdue / due today / completed */}
+      <motion.div variants={itemVariants}>
+        <FollowUpsWidget />
+      </motion.div>
 
       {/* CALL PITCH WIDGET */}
       <CallPitchWidget />

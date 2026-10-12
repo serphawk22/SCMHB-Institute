@@ -405,7 +405,7 @@ export default function InstructorDetailsPage() {
                       innerRadius={45}
                       paddingAngle={3}
                       label={({ name, percent }) =>
-                        `${name.split(" ")[0]}: ${percent ? (percent * 100).toFixed(0) : 0}%`
+                        `${(name ?? "").split(" ")[0]}: ${percent ? (percent * 100).toFixed(0) : 0}%`
                       }
                       labelLine={false}
                     >

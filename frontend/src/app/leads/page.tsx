@@ -309,6 +309,7 @@ export default function LeadsPage() {
     const body: any = { scheduled_at: p.scheduled_at, notes: p.notes || null };
     if (isWebinar) body.meeting_url = p.meeting_url || null;
     if (isWalkIn) body.location = p.location || "Campus Front Desk";
+    if (!isWebinar && !isWalkIn) body.tz_offset = new Date().getTimezoneOffset(); // the time is this browser's local time
     const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/${endpoint}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

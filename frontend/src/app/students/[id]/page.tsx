@@ -8,14 +8,17 @@ import {
   ArrowLeft,
   ArrowUpRight,
   BookOpen,
+  CalendarClock,
   CalendarDays,
   CheckCircle2,
   Clock,
   ExternalLink,
   FileText,
   FileUp,
+  LayoutDashboard,
   Link2,
   Loader2,
+  Mail,
   Phone,
   Send,
   Upload,
@@ -27,6 +30,15 @@ import CreateInstituteLoginButton from "@/components/CreateInstituteLoginButton"
 import StudentLifecyclePanel, { StudentProfileData } from "@/components/StudentLifecyclePanel";
 import StudentEnrollmentActions from "@/components/StudentEnrollmentActions";
 import StudentExecutiveOverview from "@/components/StudentExecutiveOverview";
+import RecordEmailTab from "@/components/email/RecordEmailTab";
+import RecordFollowUpsTab from "@/components/followups/RecordFollowUpsTab";
+
+const RECORD_TABS = [
+  { key: "overview", label: "Overview", icon: LayoutDashboard },
+  { key: "email", label: "Email", icon: Mail },
+  { key: "followups", label: "Follow-ups", icon: CalendarClock },
+] as const;
+type RecordTab = (typeof RECORD_TABS)[number]["key"];
 
 interface Enrollment {
   id: number;
@@ -104,6 +116,15 @@ export default function StudentDetailsPage() {
   const { role } = useRole();
   const canCreateLogin = role === "Admin" || role === "SuperAdmin";
   const canManageEnrollment = ["Admin", "Employee", "SalesManager", "Demo", "SuperAdmin"].includes(role);
+  // Email and Follow-ups are staff tools: a student viewing their own profile or an instructor never sees them.
+  const showRecordTabs = Boolean(role) && role !== "Student" && role !== "Instructor";
+  const [activeTab, setActiveTab] = useState<RecordTab>("overview");
+
+  // Deep links such as /students/12?tab=followups (follow-up reminders, the Inbox).
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab && RECORD_TABS.some((t) => t.key === tab)) setActiveTab(tab as RecordTab);
+  }, []);
 
   const [student, setStudent] = useState<StudentRecord | null>(null);
   const [profile, setProfile] = useState<StudentProfileData | null>(null);
@@ -300,6 +321,26 @@ export default function StudentDetailsPage() {
         </div>
       </header>
 
+      {showRecordTabs && (
+        <nav className="flex flex-wrap gap-1 border-b border-[var(--border)]" aria-label="Student record">
+          {RECORD_TABS.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setActiveTab(key)}
+              className={`-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition ${activeTab === key ? "border-emerald-700 text-emerald-800 dark:border-emerald-400 dark:text-emerald-300" : "border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {showRecordTabs && activeTab === "email" && <RecordEmailTab kind="students" recordId={String(student.id)} />}
+      {showRecordTabs && activeTab === "followups" && <RecordFollowUpsTab kind="student" recordId={student.id} />}
+
+      {(!showRecordTabs || activeTab === "overview") && (<>
       {submitNotice && (
         <div className="rounded-md border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
           {submitNotice}
@@ -686,6 +727,7 @@ export default function StudentDetailsPage() {
           </div>
         </aside>
       </section>
+      </>)}
     </div>
   );
 }
