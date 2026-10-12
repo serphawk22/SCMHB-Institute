@@ -409,9 +409,9 @@ export default function SignupPage() {
                 <div className="mt-4 pt-4 border-t border-slate-100 dark:border-zinc-800/60 text-center">
                   <p className="text-sm text-slate-500 dark:text-zinc-500">
                     Already have an account?{" "}
-                    <Link href="/login" className="text-slate-900 dark:text-zinc-200 font-semibold hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+                    <a href="/opening" className="text-slate-900 dark:text-zinc-200 font-semibold hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
                       Sign in
-                    </Link>
+                    </a>
                   </p>
                 </div>
               </motion.form>

@@ -71,7 +71,7 @@ export default function PricingPage() {
     setLoading(pkgId);
     setTimeout(() => {
       alert(`${t("pricing.payment_prefix")}${pkgId}${t("pricing.payment_suffix")}`);
-      router.push('/login');
+      window.location.href = '/opening';
     }, 1500);
   };
 
