@@ -18,7 +18,7 @@ export default function OnboardingPage() {
   useEffect(() => {
     const saved = localStorage.getItem("crm_user");
     if (!saved) {
-      router.push("/login");
+      window.location.href = "/opening";
     }
   }, [router]);
 
