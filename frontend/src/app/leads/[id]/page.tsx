@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Activity, MessageSquare, StickyNote, CheckSquare, Building2, ChevronDown,
   Target, FolderOpen, HeartPulse, LayoutDashboard, Users,
-  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, DollarSign, Zap, Star, Mail, Clock, Ticket, Globe, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar, Sparkles
+  TrendingUp, TrendingDown, Lightbulb, ShieldAlert, DollarSign, Zap, Star, Mail, Clock, Ticket, Globe, Store, Tag, Phone, X, FileText, Send, Search, Filter, Check, Smartphone, Calendar, AlertCircle, ArrowUpRight, Copy, Brain, Loader2, Radar, Sparkles, CalendarClock
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -27,11 +27,15 @@ import ConversationsTab from './components/tabs/ConversationsTab';
 import NotesTab from './components/tabs/NotesTab';
 import TasksTab from './components/tabs/TasksTab';
 import FilesTab from './components/tabs/FilesTab';
+import RecordEmailTab from '@/components/email/RecordEmailTab';
+import RecordFollowUpsTab from '@/components/followups/RecordFollowUpsTab';
 
 // ─── Tab definitions ───────────────────────────────────────────────────────────
 const TABS = [
   { key: 'overview',       label: 'Overview',       icon: LayoutDashboard },
   { key: 'timeline',       label: 'Timeline',        icon: Activity        },
+  { key: 'email',          label: 'EMAIL',           icon: Mail            },
+  { key: 'followups',      label: 'Follow-ups',      icon: CalendarClock   },
   { key: 'files',          label: 'Files',           icon: FolderOpen      },
   { key: 'conversations',  label: 'Conversations',   icon: MessageSquare   },
 ];
@@ -97,7 +101,7 @@ function CollapsibleSection({ title, icon: Icon, count, defaultOpen = false, acc
 }
 
 // ─── Overview Tab — premium light ──────────────────────────────────────────
-function OverviewTab({ lead, employees, serviceRequests, activities, timeline, research, notes, conversations, leadId, onNotesRefresh, onConversationsRefresh, emails, handleGenerateAnalysis, isGeneratingResearch, onRefresh, setSelectedActivity }: any) {
+function OverviewTab({ lead, employees, serviceRequests, activities, timeline, research, notes, conversations, leadId, onNotesRefresh, onConversationsRefresh, emails, handleGenerateAnalysis, isGeneratingResearch, onRefresh, onActivitySelect, onOpenFollowUps }: any) {
   const { t, language } = useLanguage();
   const recentActivities = (activities || []).slice(0, 8);
 
@@ -168,7 +172,7 @@ function OverviewTab({ lead, employees, serviceRequests, activities, timeline, r
 
       <BackgroundDetailsEditor resource="leads" profileId={leadId} details={lead?.background_details} />
       <LeadDemoTracker leadId={leadId} />
-      <LeadFollowUpScheduler leadId={leadId} leadName={lead?.company_name || lead?.first_name || 'Lead'} />
+      <LeadFollowUpScheduler onOpen={onOpenFollowUps} />
 
       {/* Company Overview */}
       {research?.company_overview && (
@@ -443,7 +447,7 @@ function OverviewTab({ lead, employees, serviceRequests, activities, timeline, r
             recentActivities.map((a: any) => (
               <div 
                 key={a.id} 
-                onClick={() => setSelectedActivity(a)}
+                onClick={() => onActivitySelect(a)}
                 style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 8px', borderBottom: '1px solid var(--border)', cursor: 'pointer', borderRadius: 8, transition: 'background 0.15s' }}
                 onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -567,6 +571,12 @@ export default function LeadDetailsPage() {
   }, [id]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Deep links such as /leads/12?tab=email (used by the Inbox).
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    if (tab && TABS.some(t => t.key === tab)) setActiveTab(tab);
+  }, []);
 
   useEffect(() => {
     const handleRefresh = () => fetchAll();
@@ -739,7 +749,7 @@ export default function LeadDetailsPage() {
         onAddConversation={() => switchTab('conversations')}
         onCreateTask={() => switchTab('tasks')}
         onScheduleMeeting={() => router.push('/meetings')}
-        onSendEmail={() => lead?.email ? window.location.href = `mailto:${lead.email}` : alert(language === 'es' ? 'No hay correo' : 'No email found for this client')}
+        onSendEmail={() => switchTab('email')}
         onUploadFile={() => switchTab('files')}
         darkMode={darkMode}
         onToggleDarkMode={toggleDarkMode}
@@ -805,7 +815,8 @@ export default function LeadDetailsPage() {
                     handleGenerateAnalysis={handleGenerateAnalysis}
                     isGeneratingResearch={isGeneratingResearch}
                     onRefresh={fetchAll}
-                    setSelectedActivity={setSelectedActivity}
+                    onActivitySelect={setSelectedActivity}
+                    onOpenFollowUps={() => switchTab('followups')}
                   />
                 )}
                 {activeTab === 'timeline' && (
@@ -815,6 +826,8 @@ export default function LeadDetailsPage() {
                     onFilterChange={setTimelineFilter}
                   />
                 )}
+                {activeTab === 'email' && <RecordEmailTab kind="leads" recordId={id} />}
+                {activeTab === 'followups' && <RecordFollowUpsTab kind="lead" recordId={id} />}
                 {activeTab === 'conversations' && (
                   <ConversationsTab
                     leadId={id}
@@ -844,7 +857,7 @@ export default function LeadDetailsPage() {
 
           {/* ── RIGHT AI PANEL ──────────────────────────────────────── */}
           <aside className="space-y-4">
-            <AiCopilotPanelLead leadId={id} client={lead} />
+            <AiCopilotPanelLead leadId={id} lead={lead} />
 
             <section className="rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm dark:border-emerald-900 dark:bg-zinc-900">
               <div className="flex items-center justify-between gap-3">

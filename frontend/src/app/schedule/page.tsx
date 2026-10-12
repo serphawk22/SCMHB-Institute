@@ -17,7 +17,13 @@ type Kind = "all" | "webinar" | "demo" | "followup" | "walkin";
 interface ScheduleItem {
   id: number;
   type: "webinar" | "demo" | "followup" | "walkin";
-  lead_id: number;
+  // Follow-ups come from the Follow-ups system ("followups") or, for ones scheduled before it, from
+  // lead_follow_ups ("legacy"); each is updated through its own API.
+  source?: "followups" | "legacy";
+  title?: string | null;
+  // The record a Follow-ups-system follow-up belongs to (lead, student or client); none for a plain contact.
+  record?: { type: "lead" | "student" | "client"; id: number; name: string | null } | null;
+  lead_id: number | null;
   lead_name: string;
   phone?: string | null;
   email?: string | null;
@@ -132,16 +138,27 @@ export default function SchedulePage() {
     overdue: items.filter(i => groupOf(i.scheduled_at) === "Overdue").length,
   }), [items]);
 
+  const isNewFollowUp = (item: ScheduleItem) => item.type === "followup" && item.source === "followups";
+  const itemKey = (item: ScheduleItem) => `${item.type}-${item.source || "legacy"}-${item.id}`;
+  const itemHref = (item: ScheduleItem) => {
+    if (!isNewFollowUp(item)) return `/leads/${item.lead_id}`;
+    const r = item.record;
+    if (!r) return "/followups";
+    const base = r.type === "student" ? "/students" : r.type === "client" ? "/admin/clients" : "/leads";
+    return `${base}/${r.id}?tab=followups`;
+  };
+
   const endpoint = (item: ScheduleItem) => {
     if (item.type === "webinar") return `${API_BASE_URL}/lead-webinars/${item.id}`;
     if (item.type === "demo") return `${API_BASE_URL}/lead-demo-sessions/${item.id}`;
     if (item.type === "walkin") return `${API_BASE_URL}/lead-walk-ins/${item.id}`;
+    if (isNewFollowUp(item)) return `${API_BASE_URL}/followups/${item.id}`;
     return `${API_BASE_URL}/lead-follow-ups/${item.id}`;
   };
 
-  const patch = async (item: ScheduleItem, body: Record<string, unknown>) => {
-    const res = await fetch(endpoint(item), {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  const send = async (url: string, method: "PATCH" | "POST", body: Record<string, unknown>) => {
+    const res = await fetch(url, {
+      method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     if (!res.ok) {
       const d = await res.json().catch(() => null);
@@ -149,13 +166,22 @@ export default function SchedulePage() {
     }
   };
 
+  const patch = (item: ScheduleItem, body: Record<string, unknown>) => send(endpoint(item), "PATCH", body);
+
   const act = async (item: ScheduleItem, kindOfAction: "done" | "not_attended" | "cancel") => {
     const isWebinar = item.type === "webinar" || item.type === "demo";
     const itemLabel = isWebinar ? "webinar" : item.type === "walkin" ? "walk-in" : "follow-up";
     if (kindOfAction === "cancel" && !confirm(`Cancel this ${itemLabel} for ${item.lead_name}?`)) return;
-    const key = `${item.type}-${item.id}`;
+    const key = itemKey(item);
     setBusyKey(key);
     try {
+      if (isNewFollowUp(item)) {
+        const tz_offset = new Date().getTimezoneOffset();
+        if (kindOfAction === "done") await send(`${endpoint(item)}/complete`, "POST", { tz_offset });
+        else await patch(item, { status: "Cancelled", tz_offset });
+        await load(true);
+        return;
+      }
       let status = "Done";
       if (kindOfAction === "not_attended") {
         status = "Not Attended";
@@ -175,6 +201,12 @@ export default function SchedulePage() {
 
   const submitReschedule = async (p: SchedulePayload) => {
     if (!reschedule) return;
+    if (isNewFollowUp(reschedule)) {
+      await patch(reschedule, { due_at: p.scheduled_at, notes: p.notes || null, tz_offset: new Date().getTimezoneOffset() });
+      setReschedule(null);
+      await load(true);
+      return;
+    }
     const body: Record<string, unknown> = { scheduled_at: p.scheduled_at, notes: p.notes || null };
     if (reschedule.type === "webinar" || reschedule.type === "demo") body.meeting_url = p.meeting_url || null;
     if (reschedule.type === "walkin") body.location = p.location || "Campus Front Desk";
@@ -247,7 +279,7 @@ export default function SchedulePage() {
             </div>
             <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Nothing scheduled</h3>
             <p className="mt-1 max-w-sm text-sm text-slate-500 dark:text-slate-400">
-              Move a lead to <b>Follow-up</b>, <b>Webinar Scheduled</b>, or <b>Walk-in Scheduled</b> in <Link href="/leads" className="font-semibold text-blue-600 hover:underline">Student Leads</Link> and it will show up here.
+              Move a lead to <b>Follow-up</b>, <b>Webinar Scheduled</b>, or <b>Walk-in Scheduled</b> in <Link href="/leads" className="font-semibold text-blue-600 hover:underline">Student Leads</Link>, or add a follow-up on the <Link href="/followups" className="font-semibold text-blue-600 hover:underline">Follow-ups</Link> page, and it will show up here.
             </p>
           </div>
         ) : (
@@ -260,7 +292,7 @@ export default function SchedulePage() {
                 </h2>
                 <div className="space-y-3">
                   {rows.map(item => {
-                    const key = `${item.type}-${item.id}`;
+                    const key = itemKey(item);
                     const isWebinar = item.type === "webinar" || item.type === "demo";
                     const isWalkIn = item.type === "walkin";
                     const overdue = group === "Overdue";
@@ -289,13 +321,18 @@ export default function SchedulePage() {
 
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <Link href={`/leads/${item.lead_id}`} className="group flex items-center gap-1 text-base font-bold text-slate-900 hover:text-blue-600 dark:text-white dark:hover:text-blue-400">
+                            <Link href={itemHref(item)} className="group flex items-center gap-1 text-base font-bold text-slate-900 hover:text-blue-600 dark:text-white dark:hover:text-blue-400">
                               {item.lead_name}
                               <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
                             </Link>
                             <span className={`rounded-md border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${badgeClass}`}>
                               {isWebinar ? "Webinar" : isWalkIn ? "Walk-in" : "Follow-up"}
                             </span>
+                            {isNewFollowUp(item) && item.record && item.record.type !== "lead" && (
+                              <span className="rounded-md border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-300">
+                                {item.record.type === "student" ? "Student" : "Client"}
+                              </span>
+                            )}
                             {overdue && <span className="rounded-md bg-red-500/10 px-2 py-0.5 text-[11px] font-bold uppercase text-red-600">Overdue</span>}
                           </div>
                           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-slate-500 dark:text-slate-400">
@@ -311,6 +348,7 @@ export default function SchedulePage() {
                               <span className="inline-flex items-center gap-1"><UserRound className="h-3.5 w-3.5" />{item.owner_name || "Unassigned"}</span>
                             )}
                           </div>
+                          {isNewFollowUp(item) && item.title && <p className="mt-1.5 text-[13px] font-semibold text-slate-700 dark:text-slate-200">{item.title}</p>}
                           {item.notes && <p className="mt-2 line-clamp-2 text-[13px] text-slate-600 dark:text-slate-300">{item.notes}</p>}
                           {item.meeting_url && (
                             <a href={item.meeting_url} target="_blank" rel="noreferrer"
@@ -355,7 +393,7 @@ export default function SchedulePage() {
       <AnimatePresence>
         {reschedule && (
           <LeadScheduleModal
-            key={`${reschedule.type}-${reschedule.id}`}
+            key={itemKey(reschedule)}
             type={reschedule.type}
             leadName={reschedule.lead_name}
             initial={{ scheduled_at: reschedule.scheduled_at, notes: reschedule.notes || "", meeting_url: reschedule.meeting_url || "", location: reschedule.location || "" }}

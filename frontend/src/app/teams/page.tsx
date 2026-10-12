@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Users, Plus, Check, X, Loader2, Briefcase, GraduationCap, Target, CheckCircle, Activity, Star, UserCog, Video } from "lucide-react";
+import { Users, Plus, Check, X, Loader2, Briefcase, GraduationCap, Target, CheckCircle, Activity, Star, UserCog, Video, PlayCircle, Ticket, Layers } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import { cn } from "@/lib/utils";
 import PageGuide from "@/components/PageGuide";
