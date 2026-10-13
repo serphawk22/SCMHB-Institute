@@ -1109,7 +1109,7 @@ class Lead(SQLModel, table=True):
     tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
     id: Optional[int] = Field(default=None, primary_key=True)
     company_name: str = Field(max_length=255, index=True)
-    website: Optional[str] = Field(default=None, max_length=500)
+    website: Optional[str] = Field(default=None, sa_column=Column(Text))
     industry: Optional[str] = Field(default=None, max_length=200)
     course_interest_id: Optional[int] = Field(default=None, foreign_key="courses.id", index=True)
     gpa: Optional[float] = Field(default=None)
@@ -1159,36 +1159,6 @@ class LeadFollowUp(SQLModel, table=True):
     lead_id: int = Field(foreign_key="leads.id", index=True)
     scheduled_at: datetime = Field(index=True)
     status: str = Field(default="Pending", max_length=30, index=True)  # Pending / Done / Cancelled
-    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
-    created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class LeadWalkIn(SQLModel, table=True):
-    """A scheduled in-person walk-in / branch visit for a lead"""
-    __tablename__ = "lead_walk_ins"
-    id: Optional[int] = Field(default=None, primary_key=True)
-    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
-    lead_id: int = Field(foreign_key="leads.id", index=True)
-    scheduled_at: datetime = Field(index=True)
-    status: str = Field(default="Scheduled", max_length=30, index=True)  # Scheduled / Attended / Not Attended / Cancelled
-    location: Optional[str] = Field(default=None, max_length=255)
-    notes: Optional[str] = Field(default=None, sa_column=Column(Text))
-    created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-
-class LeadWebinar(SQLModel, table=True):
-    """A scheduled webinar for a lead"""
-    __tablename__ = "lead_webinars"
-    id: Optional[int] = Field(default=None, primary_key=True)
-    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
-    lead_id: int = Field(foreign_key="leads.id", index=True)
-    scheduled_at: datetime = Field(index=True)
-    status: str = Field(default="Scheduled", max_length=30, index=True)  # Scheduled / Attended / Not Attended / Cancelled
-    meeting_url: Optional[str] = Field(default=None, max_length=500)
     notes: Optional[str] = Field(default=None, sa_column=Column(Text))
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=datetime.utcnow)

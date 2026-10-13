@@ -58,9 +58,9 @@ function ClientLayout({ children }: { children: React.ReactNode }) {
 const inter = Inter({ subsets: ["latin"], preload: false });
 
 function AppContent({ children }: { children: React.ReactNode }) {
-  const { role, loading } = useRole();
+  const { role, loading, isAuthenticated } = useRole();
   const pathname = usePathname();
-  const isClient = role === "Client";
+  const isClient = role === "Client" && isAuthenticated;
   const isDeveloper = role === "ProjectMember";
   const isAdminOrEmployee = role === "Admin" || role === "Employee" || role === "Intern" || role === "SalesManager" || role === "Demo";
   const showChatbot = !!role && role !== "Client"; // Show for ALL roles except unauthenticated Client
@@ -112,7 +112,7 @@ function AppContent({ children }: { children: React.ReactNode }) {
     return <GlobalLoader />;
   }
 
-  if (pathname === "/login" || pathname === "/signup" || pathname === "/demo_showcase" || pathname === "/reset-password" || pathname?.startsWith("/demo_showcase")) {
+  if (pathname === "/signup" || pathname === "/demo_showcase" || pathname === "/reset-password" || pathname?.startsWith("/demo_showcase")) {
     return <main className="h-screen w-full">{children}</main>;
   }
 

@@ -7,10 +7,12 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  async rewrites() {
+  async redirects() {
     return [
-      { source: "/signin.html", destination: "/login" },
-      { source: "/signin", destination: "/login" },
+      { source: "/login", destination: "/opening", permanent: false },
+      { source: "/signin", destination: "/opening", permanent: false },
+      { source: "/signin.html", destination: "/opening", permanent: false },
+      { source: "/logout", destination: "/opening", permanent: false },
     ];
   },
 };

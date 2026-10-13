@@ -68,13 +68,13 @@ function ResetPasswordCard() {
           You can now sign in with your new credentials.
         </p>
         
-        <Link 
-          href="/login"
+        <a
+          href="/opening"
           className="w-full py-3 bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 rounded-xl text-sm font-bold tracking-wide transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
         >
           Sign in now
           <ArrowRight className="w-4 h-4" />
-        </Link>
+        </a>
       </motion.div>
     );
   }

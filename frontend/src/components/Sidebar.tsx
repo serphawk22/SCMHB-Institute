@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart
+  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -41,7 +41,7 @@ const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
-  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock
 };
 
 interface SidebarProps {
@@ -63,8 +63,7 @@ const defaultSidebarSections = [
     heading: "ADMISSIONS & SALES",
     items: [
       { id: "item-leads", name: "Student Leads", icon: "GraduationCap", href: "/leads", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
-      { id: "item-schedule", name: "Important Dates", icon: "CalendarClock", href: "/schedule", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
-      { id: "item-lead-sources", name: "Lead Sources", icon: "PieChart", href: "/lead-sources", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
+      { id: "item-schedule", name: "Follow-ups & Demos", icon: "CalendarClock", href: "/schedule", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
     ],
   },
   {
@@ -76,6 +75,7 @@ const defaultSidebarSections = [
       { id: "item-students", name: "Students", icon: "GraduationCap", href: "/students", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
       { id: "item-enrollments", name: "Enrollments & Slips", icon: "FileText", href: "/enrollments", roles: ["Admin", "Demo", "SalesManager"] },
       { id: "item-instructors", name: "Instructors", icon: "UserCog", href: "/instructors", roles: ["Admin", "Demo"] },
+      { id: "item-institute-analytics", name: "Institute Analytics", icon: "BarChart2", href: "/institute-analytics", roles: ["Admin", "Demo", "SalesManager"] },
     ],
   },
   {
@@ -84,6 +84,7 @@ const defaultSidebarSections = [
     items: [
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-meetings", name: "Meetings", icon: "Calendar", href: "/meetings", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-calls", name: "Calls", icon: "Phone", href: "/calls", roles: ["Admin", "SalesManager", "Demo"] },
     ],
   },
@@ -412,11 +413,7 @@ export function Sidebar({ role }: SidebarProps) {
                 i.id !== "item-projects" &&
                 i.href !== "/projects" &&
                 i.id !== "item-deals" &&
-                i.href !== "/pipeline" &&
-                i.id !== "item-meetings" &&
-                i.href !== "/meetings" &&
-                i.id !== "item-institute-analytics" &&
-                i.href !== "/institute-analytics"),
+                i.href !== "/pipeline"),
             });
             const mergedSectionsClean = mergedSections.map(stripDisabled);
             
