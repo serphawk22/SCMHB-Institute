@@ -800,6 +800,8 @@ allowed_origins = [
     "https://web-production-6cd72.up.railway.app",
     "https://web-production-80e20.up.railway.app",
     "https://web-production-d6daf.up.railway.app",
+    "https://web-production-8c2c7.up.railway.app",
+
     "https://crm-seo.allytechcourses.com",
     "https://crm-seo.serphawk.in",
     "https://crm.serphawk.in",
