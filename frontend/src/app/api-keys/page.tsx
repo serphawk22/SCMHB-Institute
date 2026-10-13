@@ -148,7 +148,7 @@ export default function APIKeysPage() {
         {/* Usage example */}
         <div className="bg-slate-900 rounded-2xl p-5 mb-8">
           <p className="text-xs text-slate-400 font-mono mb-3 uppercase tracking-wider">{t("api_keys.example_request")}</p>
-          <pre className="text-sm text-slate-200 font-mono overflow-x-auto">{`curl https://web-production-8c2c7.up.railway.app/leads \\
+          <pre className="text-sm text-slate-200 font-mono overflow-x-auto">{`curl https://web-production-d6daf.up.railway.app/leads \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json"`}</pre>
         </div>

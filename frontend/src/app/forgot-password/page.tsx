@@ -63,10 +63,10 @@ export default function ForgotPasswordPage() {
       >
         <div className="bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl border border-white/20 dark:border-zinc-800 shadow-2xl rounded-3xl p-8 sm:p-10">
           
-          <a href="/opening" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 dark:text-zinc-500 dark:hover:text-zinc-300 transition-colors mb-6 group uppercase tracking-widest">
+          <Link href="/login" className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-slate-900 dark:text-zinc-500 dark:hover:text-zinc-300 transition-colors mb-6 group uppercase tracking-widest">
             <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1 transition-transform" />
             Back to login
-          </a>
+          </Link>
 
           {!success ? (
             <>
@@ -143,12 +143,12 @@ export default function ForgotPasswordPage() {
                 Please check your email and click the link to reset your password.
               </p>
               
-              <a
-                href="/opening"
+              <Link 
+                href="/login"
                 className="w-full py-3 bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 rounded-xl text-sm font-bold tracking-wide transition-all shadow-md hover:shadow-lg flex items-center justify-center"
               >
                 Return to Login
-              </a>
+              </Link>
             </motion.div>
           )}
 
