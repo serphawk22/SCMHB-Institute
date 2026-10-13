@@ -1109,7 +1109,7 @@ class Lead(SQLModel, table=True):
     tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
     id: Optional[int] = Field(default=None, primary_key=True)
     company_name: str = Field(max_length=255, index=True)
-    website: Optional[str] = Field(default=None, max_length=500)
+    website: Optional[str] = Field(default=None, sa_column=Column(Text))
     industry: Optional[str] = Field(default=None, max_length=200)
     course_interest_id: Optional[int] = Field(default=None, foreign_key="courses.id", index=True)
     gpa: Optional[float] = Field(default=None)

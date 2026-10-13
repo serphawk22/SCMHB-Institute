@@ -557,6 +557,15 @@ def on_startup():
         except Exception as e:
             print(f"Migration proposals: {e}")
         
+    # Fix leads.website column: widen VARCHAR(500) to TEXT so long UTM URLs don't truncate
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE leads ALTER COLUMN website TYPE TEXT;"))
+            conn.commit()
+    except Exception as e:
+        pass  # Already TEXT or column doesn't exist yet; SQLModel create_all handles new tables
+
+        
     # Tenant ID Migrations (Dynamic reflection to catch all models)
     from sqlmodel import SQLModel
     tables_with_tenant = [
@@ -783,6 +792,7 @@ def on_startup():
 allowed_origins = [
     "https://serphawk-crm-seo.vercel.app",
     "https://scmhub-crm.vercel.app",
+    "https://scmhb-institute.vercel.app",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3005",
@@ -796,10 +806,7 @@ allowed_origins = [
     "https://dapros-crm.serphawk.in",
     "https://crm.dapros.serphawk.in",
     "https://dapros.serphawk.in",
-    "https://crm-seo.allytechcourses.com",
     "http://dapros.serphawk.in",
-    "https://*.vercel.app",
-    "https://*.up.railway.app",
 ]
 
 
