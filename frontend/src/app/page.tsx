@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { useRouter } from "next/navigation";
 import {
   Users, Send, Clock, Briefcase, Target, Zap, Activity,
   Globe, CheckCircle, FolderKanban, Mail, ArrowUpRight,
@@ -208,26 +207,21 @@ function StatCard({ title, value, sub, icon: Icon, gradient, href }: {
 }
 
 export default function HomePage() {
-  const { role, email, user, isAuthenticated, loading: authLoading } = useRole();
-  const router = useRouter();
+  const { isAuthenticated, loading: authLoading } = useRole();
 
+  // First-time (signed-out) visitors land on the /opening landing page.
+  // Signed-in users see the main CRM dashboard.
   useEffect(() => {
     if (authLoading) return;
     if (!isAuthenticated) {
-      router.replace("/login");
-      return;
+      window.location.replace("/opening");
     }
-    if (role === "Employee") {
-      router.replace("/projects");
-    }
-  }, [authLoading, isAuthenticated, role, router]);
+  }, [authLoading, isAuthenticated]);
 
-  // Show landing page if not authenticated
-  if (!authLoading && !isAuthenticated) {
+  if (authLoading || !isAuthenticated) {
     return null;
   }
 
-  // Show dashboard if authenticated
   return <Dashboard />;
 }
 
