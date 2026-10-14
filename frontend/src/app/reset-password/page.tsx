@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Loader2, KeyRound, Lock, CheckCircle2, ArrowLeft, ShieldCheck, Eye, EyeOff } from "lucide-react";
+import { Loader2, KeyRound, Lock, CheckCircle2, ArrowLeft, ArrowRight, ShieldCheck, Eye, EyeOff } from "lucide-react";
 import { API_BASE_URL } from "@/config";
 import PasswordStrengthMeter from "@/components/PasswordStrengthMeter";
 import { motion, AnimatePresence } from "framer-motion";
@@ -68,13 +68,13 @@ function ResetPasswordCard() {
           You can now sign in with your new credentials.
         </p>
         
-        <a
-          href="/opening"
+        <Link 
+          href="/login"
           className="w-full py-3 bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 rounded-xl text-sm font-bold tracking-wide transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
         >
           Sign in now
           <ArrowRight className="w-4 h-4" />
-        </a>
+        </Link>
       </motion.div>
     );
   }

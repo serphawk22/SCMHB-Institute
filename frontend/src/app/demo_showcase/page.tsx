@@ -985,7 +985,7 @@ export default function DemoShowcase() {
               <div style={{ position: "absolute", left: theme === "dark" ? 4 : 34, width: 18, height: 18, borderRadius: "50%", background: fg, transition: "left 0.3s cubic-bezier(0.34,1.56,0.64,1)" }} />
               <span style={{ position: "absolute", left: theme === "dark" ? 26 : 8, fontSize: 9, fontWeight: 800, color: fg, letterSpacing: "0.04em" }}>{theme === "dark" ? "W" : "B"}</span>
             </button>
-            <a href="/opening" style={{ padding: "6px 14px", borderRadius: 6, background: fg, color: bg, fontSize: 11, fontWeight: 700, textDecoration: "none", letterSpacing: "-0.01em" }}>{t("demo_showcase.launch_crm")}</a>
+            <a href="/login" style={{ padding: "6px 14px", borderRadius: 6, background: fg, color: bg, fontSize: 11, fontWeight: 700, textDecoration: "none", letterSpacing: "-0.01em" }}>{t("demo_showcase.launch_crm")}</a>
           </div>
         </div>
       </header>
@@ -1026,7 +1026,7 @@ export default function DemoShowcase() {
               </p>
               <div style={{ display: "flex", gap: 12 }}>
                 <button onClick={() => { setTourStep(0); setTourActive(true); }} style={{ padding: "12px 28px", borderRadius: 8, background: fg, color: bg, fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none", letterSpacing: "-0.02em" }}>{t("demo_showcase.start_guided_tour")}</button>
-                <a href="/opening" style={{ padding: "12px 28px", borderRadius: 8, background: "transparent", color: fg, fontSize: 13, fontWeight: 600, cursor: "pointer", border: `1px solid ${border}`, textDecoration: "none", letterSpacing: "-0.02em", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <a href="/login" style={{ padding: "12px 28px", borderRadius: 8, background: "transparent", color: fg, fontSize: 13, fontWeight: 600, cursor: "pointer", border: `1px solid ${border}`, textDecoration: "none", letterSpacing: "-0.02em", display: "inline-flex", alignItems: "center", gap: 6 }}>
                   {t("demo_showcase.launch_crm")} <span style={{ animation: "nudgeRight 1.5s ease-in-out infinite" }}>→</span>
                 </a>
               </div>
@@ -1198,7 +1198,7 @@ export default function DemoShowcase() {
               {t("demo_showcase.cta_sub")}
             </p>
             <div style={{ display: "flex", gap: 12 }}>
-              <a href="/opening" style={{ padding: "14px 32px", borderRadius: 8, background: fg, color: bg, fontSize: 14, fontWeight: 700, textDecoration: "none", letterSpacing: "-0.02em" }}>
+              <a href="/login" style={{ padding: "14px 32px", borderRadius: 8, background: fg, color: bg, fontSize: 14, fontWeight: 700, textDecoration: "none", letterSpacing: "-0.02em" }}>
                 {t("demo_showcase.launch_crm")}
               </a>
               <a href="https://wa.me/919502901416?text=Hi,%20I'd%20like%20to%20book%20a%20CRM%20demo" target="_blank" rel="noopener noreferrer"

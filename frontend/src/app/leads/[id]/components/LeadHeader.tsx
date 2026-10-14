@@ -109,6 +109,12 @@ export default function LeadHeader({
                 convertedStudentId={lead.converted_student_id}
               />
             )}
+            <button
+              onClick={onSendEmail}
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-sm shadow-indigo-500/20 transition-colors hover:bg-indigo-700"
+            >
+              <Mail size={14} /> {language === 'es' ? 'Enviar correo' : 'Send Email'}
+            </button>
           </div>
         </div>
 

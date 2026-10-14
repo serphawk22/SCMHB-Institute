@@ -1,7 +1,42 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, Plus, X, Search, ThumbsUp, Eye, Edit2, Trash2, Loader2, Tag } from "lucide-react";
+import { BookOpen, Plus, X, Search, ThumbsUp, Eye, Edit2, Trash2, Loader2, Tag, ChevronDown, HelpCircle } from "lucide-react";
+
+const FAQ_ITEMS = [
+  {
+    q: "What is SCMHUB CRM and who is it for?",
+    a: "SCMHUB CRM is an all-in-one institute management platform designed for educational institutions. It helps manage leads, student enrollments, webinar scheduling, instructor workloads, team performance, financial tracking, and support — all in one place.",
+  },
+  {
+    q: "How do I add a new lead or inquiry?",
+    a: "Navigate to the Leads section from the sidebar. Click 'Add Lead', fill in the contact details, assign it to a sales team member, and set the current status. The lead will then appear in your pipeline for follow-up.",
+  },
+  {
+    q: "How does webinar scheduling work?",
+    a: "When a lead is ready for a demonstration, you can schedule a webinar directly from the lead's profile or the Important Dates section. Set the date, time, and relevant notes. The lead's status updates automatically, and you can later mark it as Attended or Not Attended.",
+  },
+  {
+    q: "Can multiple team members use the CRM simultaneously?",
+    a: "Yes. SCMHUB CRM supports multiple roles — Admin, Sales Manager, and Employee. Each user has their own login and sees data relevant to their role. Admins have full access, while team members see their own assigned leads and tasks.",
+  },
+  {
+    q: "How is revenue tracked in the CRM?",
+    a: "Revenue is tracked automatically based on student enrollments and fee collection. The dashboard shows total revenue in INR, broken down by advances received and full payments. You can view per-team-member revenue stats in the Teams section.",
+  },
+  {
+    q: "Is my data secure on SCMHUB CRM?",
+    a: "All data is stored securely on your server. Access is role-based, meaning only authorized users can view sensitive information. We recommend using strong passwords and keeping your environment up to date.",
+  },
+  {
+    q: "Where can I get help if something isn't working?",
+    a: "You can raise a support ticket from the Support section, browse solution articles here, or reach out directly to your CRM administrator. For urgent issues, use the Help Desk ticketing system built into the platform.",
+  },
+  {
+    q: "Can I track which leads converted after attending a webinar?",
+    a: "Yes. In the Teams directory and Important Dates sections, you can see webinar attendance status alongside enrollment data. The dashboard also shows a funnel view of inquiries → webinar attended → enrolled, giving you a full picture of conversion.",
+  },
+];
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
 
@@ -18,6 +53,7 @@ export default function SolutionsPage() {
   const [editSolution, setEditSolution] = useState<Solution | null>(null);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ title: "", content: "", category: "", tags: "", is_published: true });
+  const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   const load = () => { setLoading(true); fetch(`${API_BASE_URL}/solutions`).then(r => r.json()).then(d => setSolutions(Array.isArray(d.solutions) ? d.solutions : [])).finally(() => setLoading(false)); };
   useEffect(load, []);
@@ -156,6 +192,56 @@ export default function SolutionsPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* FAQ Section */}
+      <div className="mt-4 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 rounded-2xl shadow-sm overflow-hidden">
+        <div className="flex items-center gap-3 p-6 border-b border-slate-100 dark:border-zinc-800 bg-gradient-to-r from-indigo-50 to-violet-50 dark:from-indigo-500/5 dark:to-violet-500/5">
+          <div className="p-2.5 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 shadow-md shadow-indigo-500/20">
+            <HelpCircle className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h2 className="text-lg font-black text-slate-800 dark:text-zinc-100">Frequently Asked Questions</h2>
+            <p className="text-xs text-slate-500 dark:text-zinc-400 mt-0.5">Quick answers about SCMHUB CRM</p>
+          </div>
+        </div>
+        <div className="divide-y divide-slate-100 dark:divide-zinc-800">
+          {FAQ_ITEMS.map((item, idx) => (
+            <div key={idx}>
+              <button
+                onClick={() => setOpenFaq(openFaq === idx ? null : idx)}
+                className="w-full flex items-center justify-between p-5 text-left hover:bg-slate-50 dark:hover:bg-zinc-800/50 transition-colors group"
+              >
+                <span className="text-sm font-bold text-slate-800 dark:text-zinc-100 pr-4 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                  {item.q}
+                </span>
+                <motion.div
+                  animate={{ rotate: openFaq === idx ? 180 : 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="shrink-0"
+                >
+                  <ChevronDown className="w-4 h-4 text-slate-400 dark:text-zinc-500" />
+                </motion.div>
+              </button>
+              <AnimatePresence initial={false}>
+                {openFaq === idx && (
+                  <motion.div
+                    key="faq-answer"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.22, ease: "easeInOut" }}
+                    className="overflow-hidden"
+                  >
+                    <p className="px-5 pb-5 text-sm text-slate-600 dark:text-zinc-400 leading-relaxed border-l-2 border-indigo-400 ml-5">
+                      {item.a}
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

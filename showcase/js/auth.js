@@ -14,9 +14,10 @@
     if (window.API_BASE_URL) return window.API_BASE_URL.replace(/\/+$/, '');
     const origin = window.location.origin;
     if (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes(':3005')) {
-      return 'http://127.0.0.1:8001';
+      return 'http://127.0.0.1:8000';
     }
     return 'https://web-production-d6daf.up.railway.app';
+    return 'https://web-production-8c2c7.up.railway.app';
   };
 
   // Real accounts seeded in the CRM backend (see main.py `_ensure_user`).

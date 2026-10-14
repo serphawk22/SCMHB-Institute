@@ -42,8 +42,10 @@ schema_inspect.txt
 health.json
 tmp_check_version.py
 test_*.py
+!tests/test_*.py
 *.pyc
 .myvenv/
+.local/
 
 # Local runtime state and ad-hoc QA artifacts
 uploads/

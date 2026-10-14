@@ -4,15 +4,12 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
-  async redirects() {
+  // (The old `eslint.ignoreDuringBuilds` key was removed: Next 16 no longer lints during
+  // `next build` and rejects that option in NextConfig.)
+  async rewrites() {
     return [
-      { source: "/login", destination: "/opening", permanent: false },
-      { source: "/signin", destination: "/opening", permanent: false },
-      { source: "/signin.html", destination: "/opening", permanent: false },
-      { source: "/logout", destination: "/opening", permanent: false },
+      { source: "/signin.html", destination: "/login" },
+      { source: "/signin", destination: "/login" },
     ];
   },
 };

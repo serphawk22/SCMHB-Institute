@@ -12,6 +12,7 @@ interface User {
   name: string;
   role: Role;
   client_id?: number;
+  tenant_id?: number | null;
 }
 
 interface RoleContextType {
@@ -19,7 +20,7 @@ interface RoleContextType {
   email: string;
   isAuthenticated: boolean;
   user: User | null;
-  login: (email: string, pass: string) => Promise<{ success: boolean; message?: string }>;
+  login: (email: string, pass: string) => Promise<{ success: boolean; message?: string; is_new_user?: boolean }>;
   logout: () => void;
   loading: boolean;
 }
@@ -161,9 +162,9 @@ export function RoleProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!loading) {
-      if (!isAuthenticated && pathname !== '/signup' && pathname !== '/' && !pathname?.startsWith('/demo_showcase') && !pathname?.startsWith('/showcase') && pathname !== '/reset-password') {
-window.location.replace('/opening');
-      } else if (isAuthenticated && pathname === '/signup') {
+      if (!isAuthenticated && pathname !== '/login' && pathname !== '/signup' && pathname !== '/' && !pathname?.startsWith('/demo_showcase') && pathname !== '/reset-password') {
+        router.replace('/login');
+      } else if (isAuthenticated && (pathname === '/login' || pathname === '/signup')) {
         if (user?.role === 'Supplier') {
           router.replace('/supplier');
         } else if (user?.role === 'SalesManager') {
@@ -219,7 +220,7 @@ window.location.replace('/opening');
     localStorage.removeItem('crm_user');
     setUser(null);
     setIsAuthenticated(false);
-    window.location.replace('/opening');
+    router.replace('/login');
   };
 
   return (

@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock
+  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -17,6 +17,7 @@ import { useTheme } from "@/context/ThemeContext";
 import { useState, useEffect, useCallback } from "react";
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
+import { useNotifications } from "@/context/NotificationContext";
 
 // --- DND Kit Imports ---
 import {
@@ -41,8 +42,17 @@ const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
-  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox
 };
+
+// Roles shown the Inbox item (the "Student Leads" roles). routers/inbox.py enforces access server-side and
+// also lets Intern / Sales in, scoped to their own leads and students.
+const INBOX_ROLES = ["Admin", "SalesManager", "Employee", "Demo", "SuperAdmin"];
+
+// Live count shown next to a sidebar item, if any.
+function badgeCount(item: { id: string; badge?: number }, unreadCount: number, inboxUnread: number): number {
+  return item.id === "item-notifications" ? unreadCount : item.id === "item-inbox" ? inboxUnread : item.badge || 0;
+}
 
 interface SidebarProps {
   role: Role;
@@ -56,6 +66,8 @@ const defaultSidebarSections = [
       { id: "item-dashboard", name: "Dashboard", icon: "LayoutDashboard", href: "/", roles: ["Admin", "Employee", "Client", "Intern", "SalesManager", "Demo"] },
       { id: "item-work-queue", name: "My Work Queue", icon: "LayoutList", href: "/work-queue", roles: ["Demo", "Employee", "Intern"] },
       { id: "item-notifications", name: "Notifications", icon: "Bell", href: "/notifications", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
+      { id: "item-inbox", name: "Inbox", icon: "Inbox", href: "/inbox", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
+      { id: "item-followups", name: "Follow-ups", icon: "CalendarClock", href: "/followups", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
     ],
   },
   {
@@ -63,7 +75,8 @@ const defaultSidebarSections = [
     heading: "ADMISSIONS & SALES",
     items: [
       { id: "item-leads", name: "Student Leads", icon: "GraduationCap", href: "/leads", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
-      { id: "item-schedule", name: "Follow-ups & Demos", icon: "CalendarClock", href: "/schedule", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
+      { id: "item-schedule", name: "Important Dates", icon: "CalendarClock", href: "/schedule", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
+      { id: "item-lead-sources", name: "Lead Sources", icon: "PieChart", href: "/lead-sources", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
     ],
   },
   {
@@ -75,7 +88,6 @@ const defaultSidebarSections = [
       { id: "item-students", name: "Students", icon: "GraduationCap", href: "/students", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
       { id: "item-enrollments", name: "Enrollments & Slips", icon: "FileText", href: "/enrollments", roles: ["Admin", "Demo", "SalesManager"] },
       { id: "item-instructors", name: "Instructors", icon: "UserCog", href: "/instructors", roles: ["Admin", "Demo"] },
-      { id: "item-institute-analytics", name: "Institute Analytics", icon: "BarChart2", href: "/institute-analytics", roles: ["Admin", "Demo", "SalesManager"] },
     ],
   },
   {
@@ -84,7 +96,6 @@ const defaultSidebarSections = [
     items: [
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-meetings", name: "Meetings", icon: "Calendar", href: "/meetings", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-calls", name: "Calls", icon: "Phone", href: "/calls", roles: ["Admin", "SalesManager", "Demo"] },
     ],
   },
@@ -127,7 +138,7 @@ function sidebarSectionKey(id: string): string {
   return String(id).replace("section-", "").replace(/-/g, "_");
 }
 
-function SortableSection({ section, role, pathname, collapsed, isEditMode, onRenameSection, unreadCount, favourites, onToggleFavourite, searchQuery, isOpen, onToggleSection }: any) {
+function SortableSection({ section, role, pathname, collapsed, isEditMode, onRenameSection, unreadCount, inboxUnread, favourites, onToggleFavourite, searchQuery, isOpen, onToggleSection }: any) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id });
   const { t } = useLanguage();
   const itemLabel = (item: any) => {
@@ -226,6 +237,7 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
                 const isActive = pathname === item.href || (item.href !== "/" && pathname?.startsWith(item.href));
                 const IconComp = iconMap[item.icon] || LayoutDashboard;
                 const isFav = favourites?.includes(item.id);
+                const badge = badgeCount(item, unreadCount, inboxUnread);
                 return (
                   <Link
                     key={item.href}
@@ -254,9 +266,9 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
                         </motion.span>
                       )}
                     </AnimatePresence>
-                    {(item.id === "item-notifications" ? unreadCount : item.badge) > 0 && !collapsed && (
+                    {badge > 0 && !collapsed && (
                       <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[9px] font-bold flex items-center justify-center">
-                        {item.id === "item-notifications" ? unreadCount : item.badge}
+                        {badge > 99 ? "99+" : badge}
                       </span>
                     )}
                     {!collapsed && (
@@ -306,7 +318,31 @@ export function Sidebar({ role }: SidebarProps) {
   const [sections, setSections] = useState<any[]>(defaultSidebarSections);
   const [favourites, setFavourites] = useState<string[]>([]);
   const [isEditMode, setIsEditMode] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const { unreadCount } = useNotifications();
+  const [inboxUnread, setInboxUnread] = useState(0);
+
+  // Inbox unread badge: light poll, plus an immediate refresh whenever the Inbox page changes read state.
+  useEffect(() => {
+    if (!user?.id || !INBOX_ROLES.includes(role)) return;
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/inbox/counts?only=unread`);
+        if (res.ok) {
+          const data = await res.json();
+          if (alive) setInboxUnread(data.unread || 0);
+        }
+      } catch {}
+    };
+    load();
+    const timer = setInterval(load, 60000);
+    window.addEventListener("inbox-unread-changed", load);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener("inbox-unread-changed", load);
+    };
+  }, [user?.id, role]);
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(() => {
     // Default: all sections with headings start open
     const initial: Record<string, boolean> = {};
@@ -413,7 +449,11 @@ export function Sidebar({ role }: SidebarProps) {
                 i.id !== "item-projects" &&
                 i.href !== "/projects" &&
                 i.id !== "item-deals" &&
-                i.href !== "/pipeline"),
+                i.href !== "/pipeline" &&
+                i.id !== "item-meetings" &&
+                i.href !== "/meetings" &&
+                i.id !== "item-institute-analytics" &&
+                i.href !== "/institute-analytics"),
             });
             const mergedSectionsClean = mergedSections.map(stripDisabled);
             
@@ -438,19 +478,11 @@ export function Sidebar({ role }: SidebarProps) {
 
   useEffect(() => {
     fetchSidebarPrefs();
-    
-    if (!user?.id) return;
-    const fetchNotifs = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/notifications/${user.id}?unread_only=true`);
-        const data = await res.json();
-        setUnreadCount(data.unread_count || 0);
-      } catch {}
-    };
-    fetchNotifs();
-    const interval = setInterval(fetchNotifs, 30000);
-    return () => clearInterval(interval);
-  }, [user?.id, fetchSidebarPrefs]);
+    // Unread count now comes from the shared NotificationContext (already
+    // polling every 15s) instead of this component running its own
+    // independent 30s poll of the same endpoint — was doubling notification
+    // request volume with AdminTopbar.tsx polling the identical URL.
+  }, [fetchSidebarPrefs]);
 
   const saveSidebarPrefs = async (newSections: any[], newFavourites?: string[]) => {
     const favsToSave = newFavourites !== undefined ? newFavourites : favourites;
@@ -662,6 +694,7 @@ export function Sidebar({ role }: SidebarProps) {
                 {favouriteItems.map((item: any) => {
                   const isActive = pathname === item.href || (item.href !== "/" && pathname?.startsWith(item.href));
                   const IconComp = iconMap[item.icon] || LayoutDashboard;
+                  const badge = badgeCount(item, unreadCount, inboxUnread);
                   return (
                     <Link
                       key={`fav-${item.id}-${item.href}`}
@@ -690,9 +723,9 @@ export function Sidebar({ role }: SidebarProps) {
                           </motion.span>
                         )}
                       </AnimatePresence>
-                      {(item.id === "item-notifications" ? unreadCount : item.badge) > 0 && !collapsed && (
+                      {badge > 0 && !collapsed && (
                         <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[9px] font-bold flex items-center justify-center">
-                          {item.id === "item-notifications" ? unreadCount : item.badge}
+                          {badge > 99 ? "99+" : badge}
                         </span>
                       )}
                       {!collapsed && (
@@ -720,9 +753,10 @@ export function Sidebar({ role }: SidebarProps) {
             <SortableContext items={sections.map(s => s.id)} strategy={verticalListSortingStrategy}>
               {sections.map((section) => (
                 <SortableSection 
-                  key={section.id} 
-                  section={section} 
+                  key={section.id}
+                  section={section}
                   unreadCount={unreadCount}
+                  inboxUnread={inboxUnread}
                   role={role} 
                   pathname={pathname} 
                   collapsed={collapsed} 

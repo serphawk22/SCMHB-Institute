@@ -17,6 +17,9 @@
       return 'http://127.0.0.1:8001';
     }
     return 'https://web-production-d6daf.up.railway.app';
+      return 'http://127.0.0.1:8000';
+    }
+    return 'https://web-production-8c2c7.up.railway.app';
   };
 
   // Real accounts seeded in the CRM backend (see main.py `_ensure_user`).

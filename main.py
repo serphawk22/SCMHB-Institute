@@ -15,8 +15,16 @@ from sqlmodel import Session
 from modules.scraper import research_and_map_company
 from pydantic import BaseModel
 
-from database import engine, SentEmail
+from database import engine, SentEmail, EmailReply
 from sqlmodel import select
+
+
+# Module level on purpose: with `from __future__ import annotations` FastAPI resolves a body model by
+# name from this module's globals, so a class defined inside the function below would be taken for a
+# query parameter (every bulk delete would fail with 422).
+class BulkDeleteRequest(BaseModel):
+    ids: list[int]
+
 
 def register_sent_emails_endpoint(app, get_session):
     from fastapi import Depends
@@ -31,12 +39,33 @@ def register_sent_emails_endpoint(app, get_session):
             query = query.where(SentEmail.client_id == client_id)
             total_query = total_query.where(SentEmail.client_id == client_id)
             manual_query = manual_query.where(SentEmail.client_id == client_id)
-        
+
         total_count = session.exec(total_query).first() or 0
         manual_count = session.exec(manual_query).first() or 0
         auto_count = total_count - manual_count
-        
+
         emails = session.exec(query.limit(limit)).all()
+
+        # One query for every reply across this page of emails, instead of N+1.
+        email_ids = [e.id for e in emails]
+        replies_by_email: dict[int, list] = {}
+        if email_ids:
+            all_replies = session.exec(
+                select(EmailReply)
+                .where(EmailReply.sent_email_id.in_(email_ids))
+                .order_by(EmailReply.received_at.asc())
+            ).all()
+            for r in all_replies:
+                replies_by_email.setdefault(r.sent_email_id, []).append({
+                    "id": r.id,
+                    "from_address": r.from_address,
+                    "subject": r.subject,
+                    "body_text": r.body_text,
+                    "body_text_full": r.body_text_full,
+                    "body_html": r.body_html,
+                    "received_at": r.received_at.isoformat() if r.received_at else None,
+                })
+
         return {
             "totalSent": total_count,
             "manualCount": manual_count,
@@ -53,15 +82,48 @@ def register_sent_emails_endpoint(app, get_session):
                     "manual": e.manual,
                     "draft_json": e.draft_json,
                     "status": e.status,
-                    "sent_at": e.sent_at.isoformat() if e.sent_at else None
+                    "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+                    "opened_at": e.opened_at.isoformat() if e.opened_at else None,
+                    "last_opened_at": e.last_opened_at.isoformat() if e.last_opened_at else None,
+                    "open_count": e.open_count,
+                    "replied_at": e.replied_at.isoformat() if e.replied_at else None,
+                    "reply_from": e.reply_from,
+                    "reply_subject": e.reply_subject,
+                    "reply_body": e.reply_body,
+                    "replies": replies_by_email.get(e.id, []),
                 }
                 for e in emails
             ]
         }
 
+    # The frontend's per-row trash icon and "Select All" bulk-delete have always
+    # called these two routes, but neither existed on the backend — delete was
+    # silently a no-op (optimistic UI removal that reverted on next refresh).
+    @app.delete("/sent-emails/{email_id}")
+    def delete_sent_email(email_id: int, session: Session = Depends(get_session)):
+        email = session.get(SentEmail, email_id)
+        if not email:
+            raise HTTPException(status_code=404, detail="Sent email not found")
+        session.delete(email)
+        session.commit()
+        return {"ok": True}
+
+    @app.post("/sent-emails/bulk-delete")
+    def bulk_delete_sent_emails(body: BulkDeleteRequest, session: Session = Depends(get_session)):
+        if not body.ids:
+            return {"ok": True, "deleted": 0}
+        deleted = 0
+        for email_id in body.ids:
+            email = session.get(SentEmail, email_id)
+            if email:
+                session.delete(email)
+                deleted += 1
+        session.commit()
+        return {"ok": True, "deleted": deleted}
+
 import hashlib
 import re
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Form, UploadFile, File, Body
@@ -92,6 +154,7 @@ from database import (
     Contact,
     ConversationLog,
     ConversationReply,
+    FollowUp,
     Deal,
     Document,
     EmailIntegration,
@@ -123,6 +186,8 @@ from database import (
     Tenant,
     PageVisitTelemetry,
     User,
+    EmailAgentProfile,
+    UserEmailIntegration,
     create_db_and_tables,
     engine,
     InventoryItem,
@@ -474,6 +539,47 @@ app.include_router(email_tracking_router)
 from routers.leaderboard import router as leaderboard_router
 app.include_router(leaderboard_router)
 
+from routers.inbox import router as inbox_router
+app.include_router(inbox_router)
+
+from routers.followups import router as followups_router
+app.include_router(followups_router)
+
+from routers.email_campaigns import router as email_campaigns_router
+app.include_router(email_campaigns_router)
+
+
+def _ensure_email_tables(bind=None) -> list:
+    """Create the email-stack tables (tracking, inbox, sender profile / integration, follow-ups, campaigns)
+    when missing. database.create_db_and_tables() skips create_all() on any PostgreSQL schema that already
+    has tables, so without this they would never appear on an existing database. Idempotent: create_all
+    only creates what is missing.
+
+    A table that already exists but lacks some of the model's columns (an older version of the same table)
+    gets them added as nullable columns, and each one is logged. Returns the "table.column" names added."""
+    from sqlalchemy import inspect as sa_inspect, text as sa_text
+    from sqlmodel import SQLModel
+    from database import (EmailAgentProfile, EmailCampaign, EmailCampaignRecipient, EmailReply, FollowUp,
+                          FollowUpNoteScan, InboxMessage, UserEmailIntegration)
+    bind = bind or engine
+    tables = [m.__table__ for m in (EmailReply, InboxMessage, EmailAgentProfile, UserEmailIntegration, FollowUp,
+                                    FollowUpNoteScan, EmailCampaign, EmailCampaignRecipient)]
+    SQLModel.metadata.create_all(bind, tables=tables)
+    added = []
+    inspector = sa_inspect(bind)
+    with bind.begin() as conn:
+        for table in tables:
+            present = {c["name"] for c in inspector.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in present:
+                    continue
+                conn.execute(sa_text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {col.type.compile(dialect=bind.dialect)}'))
+                added.append(f"{table.name}.{col.name}")
+    if added:
+        print(f"[startup] email-stack tables: added missing columns {', '.join(added)}")
+    return added
+
+
 @app.on_event("startup")
 def on_startup():
     patch_openai()
@@ -556,7 +662,70 @@ def on_startup():
                 conn.commit()
         except Exception as e:
             print(f"Migration proposals: {e}")
-        
+
+    # Email-stack tables, on every boot (create_db_and_tables above skips existing schemas).
+    try:
+        _ensure_email_tables()
+    except Exception as e:
+        print(f"[startup] email-stack tables could not be created: {type(e).__name__}: {e}")
+
+    # Auto-migrate sent_emails open/reply tracking columns
+    email_tracking_migrations = [
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS opened_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS replied_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS last_opened_at TIMESTAMP;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS open_count INTEGER DEFAULT 0;",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_from VARCHAR(255);",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_subject VARCHAR(500);",
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS reply_body TEXT;",
+        # Students as a third record kind (institute); the new email tables get the column from
+        # _ensure_email_tables().
+        "ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS student_id INTEGER;",
+        "CREATE INDEX IF NOT EXISTS ix_sent_emails_student_id ON sent_emails (student_id);",
+    ]
+    for sql in email_tracking_migrations:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(sql))
+                conn.commit()
+        except Exception as e:
+            print(f"Migration sent_emails tracking: {e}")
+
+    # Say which database this process is bound to (never the credentials), so two environments that
+    # accidentally share one database are easy to spot in the logs.
+    try:
+        print(f"[startup] database: {engine.url.get_backend_name()} host={engine.url.host or 'local file'} "
+              f"name={engine.url.database}")
+    except Exception:
+        pass
+
+    # Background pollers: reply checker, inbox sync, follow-up scheduler. BACKGROUND_JOBS=0 turns all
+    # three off (modules/background.py): only one environment per database should run them.
+    from modules.background import jobs_enabled
+    if not jobs_enabled():
+        print("[startup] BACKGROUND_JOBS=0: inbox sync, reply checker and follow-up scheduler are NOT started.")
+    else:
+        # Detect replies to sent emails (IMAP-based).
+        try:
+            from modules.email_sender import start_reply_checker_thread
+            start_reply_checker_thread()
+        except Exception as e:
+            print(f"Reply checker thread failed to start: {e}")
+
+        # Mirror every inbound email into inbox_messages for the in-app Inbox (+ AI triage).
+        try:
+            from modules.inbox_sync import start_inbox_sync_thread
+            start_inbox_sync_thread()
+        except Exception as e:
+            print(f"Inbox sync thread failed to start: {e}")
+
+        # Follow-up reminders, automatic follow-up emails, AI note scanning and campaign resume.
+        try:
+            from modules.followups_core import start_followup_scheduler_thread
+            start_followup_scheduler_thread()
+        except Exception as e:
+            print(f"Follow-up scheduler failed to start: {e}")
+
     # Tenant ID Migrations (Dynamic reflection to catch all models)
     from sqlmodel import SQLModel
     tables_with_tenant = [
@@ -1302,43 +1471,56 @@ def send_manual(body: SendManualRequest, session: Session = Depends(get_session)
     session.commit()
     session.refresh(sent_email)
 
-    # Step 3.5: Send the actual email (unless skip_send is True).
-    # Primary path is direct SMTP via the configured crm@serphawk.in mailbox.
+    # Step 3.5: Send the actual email (unless skip_send is True) from the sender's mailbox chain (D3):
+    # their own Email Integration, else the company mailbox (Settings -> SMTP), else the server mailbox.
     # The N8N webhook is still fired best-effort for follow-up automation.
     if not body.skip_send:
         import os
         import httpx
-        sender = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "contact@scmbpo.com")
-        password = os.getenv("EMAIL_AGENT_PASSWORD") or os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD", "")
-        smtp_server = os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER", "mail.serphawk.in")
-        smtp_port = os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT", 587)
+        from modules import company_mailer
+        sender_profile = _email_agent_sender(session)
+        _sig = sender_profile.get("signature") if sender_profile.get("auto_append") else ""
+        try:
+            account = _email_agent_account(session)
+        except company_mailer.MailAccountError as e:
+            if str(e) != company_mailer.NOT_CONFIGURED_MESSAGE:
+                raise HTTPException(status_code=500, detail={
+                    "code": "email_integration_decrypt_failed",
+                    "message": "Unable to decrypt stored email credentials. Please re-save your Email Integration settings.",
+                })
+            account = None
+        sender_email = account.email if account else None
 
         try:
             bodies = [b for b in [body.english_body, body.spanish_body] if b and b.strip()]
             full_body = "\n\n---\n\n".join(bodies) if bodies else ""
 
-            # Send directly over SMTP from crm@serphawk.in so mail goes out even if n8n is down.
-            if sender and password:
-                from modules.email_sender import send_email_outlook
-                send_email_outlook(
-                    to_email=body.to_email,
-                    subject=body.subject,
-                    body=full_body or body.english_body or body.spanish_body or "",
-                    sender_email=sender,
-                    sender_password=password,
-                    smtp_server=smtp_server,
-                    smtp_port=int(smtp_port),
-                )
-                print(f"Email sent via SMTP to {body.to_email} from {sender}")
+            # Send directly over SMTP from the configured mailbox so mail goes out even if n8n is down.
+            if account is not None:
+                try:
+                    company_mailer.send_via(
+                        account,
+                        to=body.to_email,
+                        subject=body.subject,
+                        body=_apply_signature(full_body or body.english_body or body.spanish_body or "", _sig),
+                        tracking_id=sent_email.id,
+                    )
+                except Exception as send_err:
+                    print(f"Email send failed via SMTP: {send_err}")
+                    raise HTTPException(status_code=502, detail={
+                        "code": "email_integration_send_failed",
+                        "message": f"Unable to send email: {company_mailer.friendly_smtp_error(send_err)}",
+                    })
+                print(f"Email sent via SMTP to {body.to_email} from {sender_email} ({account.source})")
             else:
-                print("SMTP not configured (missing EMAIL_SENDER/EMAIL_PASSWORD) - skipping direct send")
+                print("SMTP not configured (missing credentials) - skipping direct send")
 
             # Fire the N8N webhook best-effort for follow-up automation (never blocks the reply).
             webhook_url = os.getenv("N8N_EMAIL_WEBHOOK_URL", "https://primary-production-d40bc.up.railway.app/webhook/trigger-cold-email")
             payload = {
                 "event": "email_sent",
                 "email_id": sent_email.id,
-                "sender": sender,
+                "sender": sender_email,
                 "to_email": body.to_email,
                 "subject": body.subject,
                 "body": full_body,
@@ -1356,6 +1538,8 @@ def send_manual(body: SendManualRequest, session: Session = Depends(get_session)
                     print(f"Webhook successfully triggered and responded from manual send to {webhook_url}")
             except Exception as e:
                 print(f"Manual Email send failed via webhook: {e}")
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"Manual Email send failed: {e}")
 
@@ -1993,6 +2177,181 @@ def _verify_password(plain: str, user: User) -> bool:
 def _user_dict(u: User) -> dict:
     return {"id": u.id, "email": u.email, "name": u.name, "phone": getattr(u, "phone", None), "role": _normalize_role(u.role), "tenant_id": u.tenant_id}
 
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _generate_signature(name, email, phone) -> str:
+    """Build the default email signature from the agent profile values.
+
+    Missing values are omitted entirely (never rendered as undefined/null).
+    """
+    lines = ["Best Regards,"]
+    if (name or "").strip():
+        lines.append(name.strip())
+    if (email or "").strip():
+        lines.append(f"Email: {email.strip()}")
+    if (phone or "").strip():
+        lines.append(f"Phone: {phone.strip()}")
+    return "\n".join(lines)
+
+
+def _get_agent_profile(session: Session, user: User) -> Optional[EmailAgentProfile]:
+    """Read-only lookup of the user's Email Agent profile row (no writes)."""
+    if not user or not user.id:
+        return None
+    return session.exec(select(EmailAgentProfile).where(EmailAgentProfile.user_id == user.id)).first()
+
+
+def _agent_profile_dict(prof: Optional[EmailAgentProfile], user: Optional[User], integ: Optional[UserEmailIntegration] = None) -> dict:
+    """Serialize the agent profile, falling back to the configured SMTP email or login record READ-ONLY
+    for display defaults when no agent profile email is set."""
+    name = (prof.agent_name if prof else None) or (user.name if user else None) or ""
+    email = (prof.agent_email if prof else None) or (integ.email if integ and integ.email else None) or (user.email if user else None) or ""
+    phone = (prof.agent_phone if prof else None) or (getattr(user, "phone", None) if user else None) or ""
+    return {
+        "agent_name": name,
+        "agent_email": email,
+        "agent_phone": phone,
+        "signature": (prof.signature if prof else None) or "",
+        "auto_append_signature": bool(prof.auto_append_signature) if prof else True,
+    }
+
+
+def _email_agent_sender(session: Session) -> dict:
+    """Resolve the authenticated user's sender identity for the Email Agent.
+
+    Source of truth is the email_agent_profiles table (sender name/email/phone/
+    signature/auto-append), fully separate from login credentials. When no agent
+    profile row exists yet, the login record is used READ-ONLY as a display
+    fallback — it is never written from this path. SMTP credentials always stay
+    on the configured mailbox. Fallbacks: the user's name, else "SCMHub Logistics"
+    (the default From name); the sending mailbox's address; no phone.
+    """
+    user_id = current_salesperson_id.get()
+    user = session.get(User, user_id) if user_id else None
+    server_address = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL") or ""
+    if not user:
+        return {
+            "name": "SCMHub Logistics",
+            "email": server_address,
+            "phone": "",
+            "signature": "",
+            "auto_append": False,
+        }
+    integ = _get_user_email_integration(session, user_id)
+    prof = _get_agent_profile(session, user)
+    d = _agent_profile_dict(prof, user, integ)
+    return {
+        "name": (d["agent_name"] or "").strip() or "SCMHub Logistics",
+        "email": (d["agent_email"] or "").strip() or server_address,
+        "phone": (d["agent_phone"] or "").strip(),
+        "signature": d["signature"] or "",
+        "auto_append": d["auto_append_signature"],
+    }
+
+
+def _email_agent_server_account():
+    """Server-mailbox step of the Email Agent chain, with this backend's existing env names and defaults:
+    EMAIL_AGENT_SENDER / EMAIL_AGENT_PASSWORD (a dedicated Email Agent mailbox) win over EMAIL_SENDER."""
+    from modules.company_mailer import MailAccount
+    sender = os.getenv("EMAIL_AGENT_SENDER") or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL")
+    password = os.getenv("EMAIL_AGENT_PASSWORD") or os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD")
+    if not (sender and password):
+        return None
+    return MailAccount(
+        email=sender, password=password,
+        smtp_host=os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER") or "mail.serphawk.in",
+        smtp_port=int(os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT") or 587),
+        source="server_env", imap_host=os.getenv("IMAP_SERVER") or None,
+    )
+
+
+def _email_agent_account(session: Session):
+    """The mailbox a person's Email Agent mail (send-manual, auto-send) goes out from (D3): their own
+    Email Integration, else the company mailbox (Settings -> SMTP), else the server mailbox.
+    Raises company_mailer.MailAccountError: NOT_CONFIGURED_MESSAGE when there is none, another
+    message when the person's stored app password can't be decrypted."""
+    from modules import company_mailer
+    user_id = current_salesperson_id.get()
+    user = session.get(User, user_id) if user_id else None
+    tenant_id = user.tenant_id if user else None
+    try:
+        return company_mailer.resolve_account(session, user_id, tenant_id)
+    except company_mailer.MailAccountError as e:
+        if str(e) != company_mailer.NOT_CONFIGURED_MESSAGE:
+            raise
+    account = _email_agent_server_account()
+    if account is None:
+        raise company_mailer.MailAccountError(company_mailer.NOT_CONFIGURED_MESSAGE)
+    if user:
+        prof = _get_agent_profile(session, user)
+        account.from_name = (prof.agent_name if prof else None) or user.name or None
+    return account
+
+
+def _get_user_email_integration(session: Session, user_id: Optional[int]) -> Optional[UserEmailIntegration]:
+    """Read the authenticated user's Email Integration row — never another user's."""
+    if not user_id:
+        return None
+    return session.exec(select(UserEmailIntegration).where(UserEmailIntegration.user_id == user_id)).first()
+
+
+def _email_integration_safe_dict(row: Optional[UserEmailIntegration]) -> dict:
+    """Serialize integration config WITHOUT any credential material."""
+    if not row:
+        return {"configured": False, "smtp_status": "not_configured", "imap_status": "not_configured"}
+    return {
+        "configured": True,
+        "email": row.email,
+        "provider": row.provider,
+        "smtp_host": row.smtp_host,
+        "smtp_port": row.smtp_port,
+        "smtp_security": row.smtp_security,
+        "imap_host": row.imap_host,
+        "imap_port": row.imap_port,
+        "imap_security": row.imap_security,
+        "is_active": bool(row.is_active),
+        "smtp_status": row.smtp_status or "not_tested",
+        "imap_status": row.imap_status or "not_tested",
+        "last_tested_at": row.last_tested_at.isoformat() if row.last_tested_at else None,
+    }
+
+
+_DEFAULT_SIGNOFF_GREETING_RE = re.compile(
+    r"^\s*(?:Best regards,?|Saludos cordiales,?|Saludos,?|Warm regards,?|Best,?|Regards,?)\s*$",
+    re.IGNORECASE,
+)
+
+_SIGNOFF_SHAPE_RE = re.compile(
+    r"scm\s*(?:bpo|hub|shipping)|dapros|(?:^|\s)[^@\s]+@[^@\s]+\.[^@\s]+|^(?:Email|Phone):\s",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _apply_signature(body: str, signature: str) -> str:
+    """Idempotently apply the user's saved email signature to a generated body.
+
+    - Empty signature: body unchanged.
+    - Signature already present in the body: unchanged (never appended twice).
+    - Otherwise: strip a trailing sign-off block (a greeting line followed by up
+      to 4 lines shaped like a signature — mentioning SCM BPO / SCMHub / SCM Shipping / Dapros, an email
+      address, or Email:/Phone: lines) and append the signature with line
+      breaks preserved exactly. This also handles a signature that changed
+      after a draft was written, so only one sign-off is ever sent.
+    """
+    if not body or not signature or not signature.strip():
+        return body
+    if signature.strip() in body:
+        return body
+    lines = body.rstrip().split("\n")
+    for i in range(len(lines) - 1, max(len(lines) - 6, 0) - 1, -1):
+        if _DEFAULT_SIGNOFF_GREETING_RE.match(lines[i]):
+            block = lines[i + 1:]
+            if block and _SIGNOFF_SHAPE_RE.search("\n".join(block)):
+                lines = lines[:i]
+                break
+    return "\n".join(lines).rstrip() + "\n\n" + signature.rstrip()
 
 def _client_dict(cp: ClientProfile, session: Session) -> dict:
     user = session.get(User, cp.userId) if cp.userId else None
@@ -2809,6 +3168,347 @@ def update_current_user(body: UserUpdateMe, session: Session = Depends(get_sessi
     session.refresh(user)
     return {"user": _user_dict(user)}
 
+
+class AgentProfileUpdate(BaseModel):
+    agent_name: Optional[str] = None
+    agent_email: Optional[str] = None
+    agent_phone: Optional[str] = None
+    signature: Optional[str] = None
+    auto_append_signature: Optional[bool] = None
+
+@app.get("/users/me/agent-profile")
+def get_email_agent_profile(session: Session = Depends(get_session)):
+    """Email Agent sender profile (separate from the login record)."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    integ = _get_user_email_integration(session, user_id)
+    return {"agent_profile": _agent_profile_dict(_get_agent_profile(session, user), user, integ)}
+
+@app.put("/users/me/agent-profile")
+def update_email_agent_profile(body: AgentProfileUpdate, session: Session = Depends(get_session)):
+    """Update the Email Agent sender profile.
+
+    Writes ONLY to email_agent_profiles — the users table (login email,
+    password) is never touched. When any sender field changes, the signature is
+    regenerated from the NEW values in the same transaction; an explicit
+    `signature` in the payload (manual Save Signature) wins over regeneration.
+    Agent emails are sender identities, not accounts, so no uniqueness check
+    applies.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    prof = _get_agent_profile(session, user)
+    if prof is None:
+        integ = _get_user_email_integration(session, user_id)
+        fallback_email = (integ.email if integ and integ.email else None) or user.email
+        prof = EmailAgentProfile(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            agent_name=user.name,
+            agent_email=fallback_email,
+            agent_phone=getattr(user, "phone", None),
+            signature=getattr(user, "signature", None),
+            auto_append_signature=bool(getattr(user, "auto_append_signature", True)),
+        )
+        session.add(prof)
+
+    profile_touched = body.agent_name is not None or body.agent_email is not None or body.agent_phone is not None
+
+    if body.agent_email is not None:
+        new_email = body.agent_email.strip()
+        if new_email and not _EMAIL_RE.match(new_email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        prof.agent_email = new_email
+    if body.agent_name is not None:
+        prof.agent_name = body.agent_name
+    if body.agent_phone is not None:
+        prof.agent_phone = body.agent_phone
+
+    if profile_touched:
+        name = (prof.agent_name or "").strip() or (user.name or "")
+        email = (prof.agent_email or "").strip() or (user.email or "")
+        phone = (prof.agent_phone or "").strip() or (getattr(user, "phone", None) or "")
+        prof.signature = _generate_signature(name, email, phone)
+
+    if body.signature is not None:
+        prof.signature = body.signature
+    if body.auto_append_signature is not None:
+        prof.auto_append_signature = bool(body.auto_append_signature)
+
+    session.commit()
+    session.refresh(prof)
+    integ = _get_user_email_integration(session, user_id)
+    return {"agent_profile": _agent_profile_dict(prof, user, integ)}
+
+
+class SignatureUpdate(BaseModel):
+    signature: Optional[str] = None
+
+@app.put("/users/me/signature")
+def update_current_user_signature(body: SignatureUpdate, session: Session = Depends(get_session)):
+    """Alias kept for compatibility — writes the signature to the agent profile
+    table (never to the login record)."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    prof = _get_agent_profile(session, user)
+    if prof is None:
+        prof = EmailAgentProfile(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            agent_name=user.name,
+            agent_email=user.email,
+            agent_phone=getattr(user, "phone", None),
+            signature=getattr(user, "signature", None),
+            auto_append_signature=bool(getattr(user, "auto_append_signature", True)),
+        )
+        session.add(prof)
+    prof.signature = body.signature
+    session.commit()
+    session.refresh(prof)
+    return {"ok": True}
+
+
+_EMAIL_INTEGRATION_PROVIDERS = {"gmail", "outlook", "yahoo", "zoho", "custom"}
+_EMAIL_INTEGRATION_SECURITY_ALIASES = {"ssl": "ssl", "ssltls": "ssl", "tls": "ssl", "starttls": "starttls", "none": "none", "": "none"}
+
+
+def _normalize_integration_security(value: Optional[str], label: str) -> Optional[str]:
+    if value is None:
+        return None
+    v = str(value).strip().lower().replace(" ", "").replace("/", "").replace("_", "")
+    if v not in _EMAIL_INTEGRATION_SECURITY_ALIASES:
+        raise HTTPException(status_code=400, detail=f"Invalid {label} security value. Use ssl, starttls, or none.")
+    return _EMAIL_INTEGRATION_SECURITY_ALIASES[v]
+
+
+def _validate_integration_port(port: Optional[int], label: str) -> Optional[int]:
+    if port is None:
+        return None
+    if not isinstance(port, int) or isinstance(port, bool) or not (1 <= port <= 65535):
+        raise HTTPException(status_code=400, detail=f"Invalid {label} port. Use a number between 1 and 65535.")
+    return port
+
+
+class EmailIntegrationUpdate(BaseModel):
+    email: Optional[str] = None
+    app_password: Optional[str] = None
+    provider: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_security: Optional[str] = None
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_security: Optional[str] = None
+
+
+@app.get("/users/me/email-integration")
+def get_email_integration(session: Session = Depends(get_session)):
+    """Safe view of the authenticated user's Email Integration. No credentials returned."""
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    row = _get_user_email_integration(session, user_id)
+    return {"integration": _email_integration_safe_dict(row)}
+
+
+@app.put("/users/me/email-integration")
+def update_email_integration(body: EmailIntegrationUpdate, session: Session = Depends(get_session)):
+    """Create/update the authenticated user's Email Integration.
+
+    The app password is encrypted at rest and NEVER returned. Server/port/
+    security fields can be updated without re-entering the password.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    user = session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    row = _get_user_email_integration(session, user_id)
+    creating = row is None
+    if creating:
+        row = UserEmailIntegration(
+            tenant_id=user.tenant_id,
+            user_id=user.id,
+            email="",
+            encrypted_app_password="",
+            smtp_host="",
+            imap_host="",
+        )
+        session.add(row)
+
+    if body.email is not None:
+        email = body.email.strip()
+        if not _EMAIL_RE.match(email):
+            raise HTTPException(status_code=400, detail="Invalid email format")
+        row.email = email
+    if body.provider is not None:
+        provider = body.provider.strip().lower()
+        if provider not in _EMAIL_INTEGRATION_PROVIDERS:
+            raise HTTPException(status_code=400, detail="Invalid provider. Use gmail, outlook, yahoo, zoho, or custom.")
+        row.provider = provider
+    if body.smtp_host is not None:
+        host = body.smtp_host.strip()
+        if not host:
+            raise HTTPException(status_code=400, detail="SMTP server is required.")
+        row.smtp_host = host
+    if body.imap_host is not None:
+        host = body.imap_host.strip()
+        if not host:
+            raise HTTPException(status_code=400, detail="IMAP server is required.")
+        row.imap_host = host
+    if body.smtp_port is not None:
+        row.smtp_port = _validate_integration_port(body.smtp_port, "SMTP")
+    if body.imap_port is not None:
+        row.imap_port = _validate_integration_port(body.imap_port, "IMAP")
+    sec = _normalize_integration_security(body.smtp_security, "SMTP")
+    if sec is not None:
+        row.smtp_security = sec
+    sec = _normalize_integration_security(body.imap_security, "IMAP")
+    if sec is not None:
+        row.imap_security = sec
+    if body.app_password is not None:
+        if not body.app_password:
+            raise HTTPException(status_code=400, detail="App password cannot be empty.")
+        from modules.email_crypto import encrypt_app_password, EmailCredentialEncryptionError
+        try:
+            row.encrypted_app_password = encrypt_app_password(body.app_password)
+        except EmailCredentialEncryptionError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if creating:
+        missing = []
+        if not row.email:
+            missing.append("email address")
+        if not row.encrypted_app_password:
+            missing.append("app password")
+        if not row.smtp_host:
+            missing.append("SMTP server")
+        if not row.imap_host:
+            missing.append("IMAP server")
+        if missing:
+            session.rollback()
+            raise HTTPException(status_code=400, detail="Missing required fields for a new configuration: " + ", ".join(missing) + ".")
+        row.smtp_status = "not_tested"
+        row.imap_status = "not_tested"
+
+    from database import _utcnow as _db_utcnow
+    row.updated_at = _db_utcnow()
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return {"integration": _email_integration_safe_dict(row)}
+
+
+class EmailIntegrationTestRequest(BaseModel):
+    scope: Optional[str] = "all"  # smtp | imap | all
+    # Optional UNSAVED overrides (test-before-save). A temporary app_password is
+    # used for the test only and is NEVER persisted.
+    email: Optional[str] = None
+    app_password: Optional[str] = None
+    provider: Optional[str] = None
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_security: Optional[str] = None
+    imap_host: Optional[str] = None
+    imap_port: Optional[int] = None
+    imap_security: Optional[str] = None
+
+
+@app.post("/users/me/email-integration/test")
+def test_email_integration(body: EmailIntegrationTestRequest, session: Session = Depends(get_session)):
+    """Run a REAL SMTP/IMAP connection test against the saved configuration.
+
+    Optional override fields (including a temporary app_password) test form
+    values BEFORE saving; those credentials are discarded and never stored.
+    Status is persisted only when the saved configuration itself was tested.
+    """
+    user_id = current_salesperson_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    row = _get_user_email_integration(session, user_id)
+
+    scope = (body.scope or "all").lower()
+    if scope not in ("smtp", "imap", "all"):
+        raise HTTPException(status_code=400, detail="Invalid test scope. Use smtp, imap, or all.")
+
+    overrides = {k: v for k, v in body.model_dump().items() if k != "scope" and v is not None}
+    has_overrides = bool(overrides)
+
+    email = overrides.get("email") or (row.email if row else None)
+    password = overrides.get("app_password")
+    password_from_stored = False
+    if password is None and row is not None and row.encrypted_app_password:
+        from modules.email_crypto import decrypt_app_password, EmailCredentialEncryptionError
+        try:
+            password = decrypt_app_password(row.encrypted_app_password)
+            password_from_stored = True
+        except EmailCredentialEncryptionError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    smtp_host = overrides.get("smtp_host") or (row.smtp_host if row else None)
+    smtp_port = overrides.get("smtp_port") or (row.smtp_port if row else None)
+    smtp_security = _normalize_integration_security(overrides.get("smtp_security") or (row.smtp_security if row else None), "SMTP")
+    imap_host = overrides.get("imap_host") or (row.imap_host if row else None)
+    imap_port = overrides.get("imap_port") or (row.imap_port if row else None)
+    imap_security = _normalize_integration_security(overrides.get("imap_security") or (row.imap_security if row else None), "IMAP")
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email Integration is not configured. Save your email account and app password before testing.")
+
+    from modules.email_integration import test_smtp_connection, test_imap_connection
+
+    result: dict = {"smtp": None, "imap": None, "last_tested_at": None}
+    failures = []
+
+    if scope in ("smtp", "all"):
+        if not smtp_host or not smtp_port:
+            result["smtp"] = {"ok": False, "message": "SMTP server and port are required."}
+        else:
+            ok, message = test_smtp_connection(email, password, smtp_host, int(smtp_port), smtp_security or "starttls")
+            result["smtp"] = {"ok": ok, "message": message}
+            if not ok:
+                failures.append(message)
+
+    if scope in ("imap", "all"):
+        if not imap_host or not imap_port:
+            result["imap"] = {"ok": False, "message": "IMAP server and port are required."}
+        else:
+            ok, message = test_imap_connection(email, password, imap_host, int(imap_port), imap_security or "ssl")
+            result["imap"] = {"ok": ok, "message": message}
+            if not ok:
+                failures.append(message)
+
+    # Persist status ONLY when the saved configuration itself was tested.
+    if row is not None and not has_overrides:
+        from database import _utcnow as _db_utcnow
+        row.last_tested_at = _db_utcnow()
+        if result["smtp"] is not None:
+            row.smtp_status = "connected" if result["smtp"]["ok"] else "failed"
+        if result["imap"] is not None:
+            row.imap_status = "connected" if result["imap"]["ok"] else "failed"
+        session.add(row)
+        session.commit()
+        result["last_tested_at"] = row.last_tested_at.isoformat()
+
+    result["ok"] = not failures
+    return result
 
 @app.get("/users")
 def list_users(role: Optional[str] = None, session: Session = Depends(get_session)):
@@ -4673,6 +5373,7 @@ def generate_outbound_draft(client_id: int, session: Session = Depends(get_sessi
             spanish_body=data.get("spanish_body", ""),
             draft_json=_json.dumps(data),
             manual=True,
+            status="Draft",  # generated, never sent — keeps it out of the Inbox's Sent view
             sent_at=datetime.utcnow()
         )
         session.add(draft)
@@ -4888,7 +5589,10 @@ def get_ai_insights(client_id: int, session: Session = Depends(get_session)):
 
     days_since_contact = None
     if last_contact:
-        days_since_contact = (datetime.utcnow() - last_contact).days
+        # sqlmodel>=0.0.4x returns tz-aware datetimes; utcnow() is naive and the subtraction raised (500)
+        if last_contact.tzinfo is None:
+            last_contact = last_contact.replace(tzinfo=timezone.utc)
+        days_since_contact = (datetime.now(timezone.utc) - last_contact).days
 
     prompt = f"""You are an AI Sales Copilot analyzing a CRM client record. Provide actionable insights.
 
@@ -4987,7 +5691,10 @@ def get_lead_ai_insights(lead_id: int, session: Session = Depends(get_session)):
 
     days_since_contact = None
     if last_contact:
-        days_since_contact = (datetime.utcnow() - last_contact).days
+        # sqlmodel>=0.0.4x returns tz-aware datetimes; utcnow() is naive and the subtraction raised (500)
+        if last_contact.tzinfo is None:
+            last_contact = last_contact.replace(tzinfo=timezone.utc)
+        days_since_contact = (datetime.now(timezone.utc) - last_contact).days
 
     prompt = f"""You are an AI Sales Copilot analyzing a CRM lead. Provide actionable insights.
 
@@ -6632,6 +7339,8 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
         from database import SentEmail
         import json
         session = next(get_session())
+        profile_sender = _email_agent_sender(session)
+        _sig = profile_sender.get("signature") if profile_sender.get("auto_append") else ""
 
         # --- Static Email Template ---
         OUTREACH_SUBJECT = "Let's grow {company_name} together!"
@@ -6685,48 +7394,17 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             inbound_body_en = inbound_llm.get("english_body") or INBOUND_BODY_EN.format(company_name=company_name, services=services)
             inbound_body_es = inbound_llm.get("spanish_body") or INBOUND_BODY_ES.format(company_name=company_name, services=services)
 
-        sender = body.sender_email or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "crm@serphawk.in")
-        password = os.getenv("EMAIL_PASSWORD") or os.getenv("OUTLOOK_PASSWORD", "")
-        smtp_server = os.getenv("EMAIL_HOST") or os.getenv("SMTP_SERVER", "smtp.gmail.com")
-        smtp_port = os.getenv("EMAIL_PORT") or os.getenv("SMTP_PORT", 587)
-        imap_server = os.getenv("IMAP_SERVER")
+        # Auto-send goes out from the sender's mailbox chain (D3): own Email Integration, then the
+        # company mailbox (Settings -> SMTP), then the server mailbox.
+        from modules import company_mailer
+        account = None
+        account_error = None
+        try:
+            account = _email_agent_account(session)
+        except company_mailer.MailAccountError as e:
+            account_error = e
+        sender = account.email if account else (body.sender_email or os.getenv("EMAIL_SENDER") or os.getenv("OUTLOOK_EMAIL", "crm@serphawk.in"))
 
-        # Only send the email if manual is False and all required fields are present
-        if not body.manual and all([body.to_email, body.subject, body.body, sender, password]):
-            try:
-                send_email_outlook(
-                    to_email=body.to_email,
-                    subject=body.subject,
-                    body=body.body,
-                    sender_email=sender,
-                    sender_password=password,
-                    smtp_server=smtp_server,
-                    smtp_port=smtp_port,
-                    imap_server=imap_server
-                )
-                
-                # --- Trigger n8n Webhook ---
-                try:
-                    import httpx
-                    webhook_url = "http://localhost:5678/webhook-test/serphawk-followup"
-                    payload = {
-                        "event": "email_sent",
-                        "sender": sender,
-                        "to_email": body.to_email,
-                        "subject": body.subject,
-                        "company": company_name,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    httpx.post(webhook_url, json=payload, timeout=5.0)
-                    print(f"Webhook successfully triggered to {webhook_url}")
-                except Exception as wh_e:
-                    print(f"Webhook trigger failed: {wh_e}")
-                    
-            except Exception as e:
-                print(f"Email send failed: {e}")
-        # If any required field is missing, skip sending and just generate the draft
-
-        # Only save to database if required fields are present
         # Provide default subject and content if missing, so frontend always gets a visible draft
         # Build the draft object for both outreach and inbound
         draft_obj = {
@@ -6775,13 +7453,66 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             "recommended_services": draft_obj.get("services") or "",
             "manual": body.manual,
             "draft_json": json.dumps(draft_obj),
-            "sent_at": draft_obj["sent_at"],
+            "sent_at": datetime.fromisoformat(draft_obj["sent_at"]),  # a datetime, not the ISO string
             "client_id": client_id
         }
         sent_email = SentEmail(**email_db_obj)
         session.add(sent_email)
         session.commit()
         session.refresh(sent_email)
+
+        # Only send the email if manual is False and all required fields are present.
+        # The SentEmail row above already exists, so its id can be embedded as an
+        # open-tracking pixel in the outgoing HTML.
+        if not body.manual and account is None:
+            if account_error is not None and str(account_error) != company_mailer.NOT_CONFIGURED_MESSAGE:
+                raise HTTPException(status_code=500, detail={
+                    "code": "email_integration_decrypt_failed",
+                    "message": "Unable to decrypt stored email credentials. Please re-save your Email Integration settings.",
+                })
+            raise HTTPException(status_code=400, detail={
+                "code": "email_integration_not_configured",
+                "message": company_mailer.NOT_CONFIGURED_MESSAGE,
+            })
+        if not body.manual and all([body.to_email, body.subject, body.body]):
+            try:
+                try:
+                    company_mailer.send_via(
+                        account,
+                        to=body.to_email,
+                        subject=body.subject,
+                        body=_apply_signature(body.body, _sig),
+                        tracking_id=sent_email.id,
+                    )
+                except Exception as send_err:
+                    print(f"Email send failed for user {current_salesperson_id.get()} from {account.email}: {send_err}")
+                    raise HTTPException(status_code=502, detail={
+                        "code": "email_integration_send_failed",
+                        "message": f"Unable to send email: {company_mailer.friendly_smtp_error(send_err)}",
+                    })
+
+                # --- Trigger n8n Webhook ---
+                try:
+                    import httpx
+                    webhook_url = "http://localhost:5678/webhook-test/serphawk-followup"
+                    payload = {
+                        "event": "email_sent",
+                        "sender": sender,
+                        "to_email": body.to_email,
+                        "subject": body.subject,
+                        "company": company_name,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    httpx.post(webhook_url, json=payload, timeout=5.0)
+                    print(f"Webhook successfully triggered to {webhook_url}")
+                except Exception as wh_e:
+                    print(f"Webhook trigger failed: {wh_e}")
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"Email send failed: {e}")
+        # If any required field is missing, skip sending and just generate the draft
 
         # --- Log activity for this client ---
         from database import ActivityLog
@@ -6800,6 +7531,8 @@ def generate_email(body: GenerateEmailRequest, background_tasks: BackgroundTasks
             background_tasks.add_task(generate_llm_draft_task, sent_email.id, body.dict())
 
         return {"ok": True, "email_id": sent_email.id, "draft": draft_obj, "client_id": client_id}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -7262,13 +7995,27 @@ def dashboard_stats(
     all_leads = session.exec(select(Lead)).all()
     lead_stage_counts = {}
     lead_source_counts = {}
+    lead_source_stats = {}
     for l in all_leads:
         st = l.status or "New"
         lead_stage_counts[st] = lead_stage_counts.get(st, 0) + 1
-        src = l.source or "Direct / Walk-in"
+        src = l.source or "Website"
         lead_source_counts[src] = lead_source_counts.get(src, 0) + 1
+        b = lead_source_stats.setdefault(src, {"total": 0, "converted": 0})
+        b["total"] += 1
+        if l.is_converted or l.converted_student_id or st == "Converted":
+            b["converted"] += 1
     lead_stage_pie = [{"name": k, "value": v} for k, v in sorted(lead_stage_counts.items(), key=lambda x: -x[1])]
     lead_source_pie = [{"name": k, "value": v} for k, v in sorted(lead_source_counts.items(), key=lambda x: -x[1])]
+    lead_source_win_rate = [
+        {
+            "source": k,
+            "total": v["total"],
+            "converted": v["converted"],
+            "win_rate": round((v["converted"] / v["total"]) * 100, 1) if v["total"] > 0 else 0.0,
+        }
+        for k, v in sorted(lead_source_stats.items(), key=lambda x: -x[1]["total"])
+    ]
 
     all_enrollments = session.exec(select(Enrollment)).all()
     all_courses = session.exec(select(Course)).all()
@@ -7286,9 +8033,20 @@ def dashboard_stats(
 
     total_enrollment_paid = sum(enr.amount_paid or 0 for enr in all_enrollments)
     total_enrollment_due = sum(enr.amount_due or 0 for enr in all_enrollments)
-    if total_enrollment_paid == 0 and total_enrollment_due == 0:
+    total_enrollment_fee = sum(enr.total_fee or 0 for enr in all_enrollments)
+
+    all_payments = session.exec(select(PaymentRecord)).all()
+    total_payments_amount = sum(p.amount or 0 for p in all_payments)
+    if total_payments_amount > total_enrollment_paid:
+        total_enrollment_paid = total_payments_amount
+
+    # If training enrollments exist, total revenue is based on collected fees & advances made
+    if total_enrollment_paid > 0 or total_enrollment_fee > 0:
+        total_revenue = round(total_enrollment_paid, 2)
+    elif total_enrollment_paid == 0 and total_enrollment_due == 0:
         total_enrollment_paid = paid_invoices_value
         total_enrollment_due = sent_invoices_value + overdue_invoices_value
+
     revenue_health_pie = [
         {"name": "Collected / Paid", "value": round(total_enrollment_paid, 2)},
         {"name": "Outstanding / Due", "value": round(total_enrollment_due, 2)}
@@ -7326,7 +8084,12 @@ def dashboard_stats(
 
     today_iso = datetime.utcnow().date().isoformat()
     today_tasks_count = sum(1 for t in all_task_entries if t.work_date == today_iso)
-    pending_demos_count = sum(1 for l in all_leads if (l.status or "").lower() in ("demo scheduled", "demo"))
+    pending_scheduled_count = (
+        len(session.exec(select(LeadWebinar).where(LeadWebinar.status == "Scheduled")).all()) +
+        len(session.exec(select(LeadWalkIn).where(LeadWalkIn.status == "Scheduled")).all()) +
+        len(session.exec(select(LeadFollowUp).where(LeadFollowUp.status == "Pending")).all()) +
+        len(session.exec(select(LeadDemoSession).where(LeadDemoSession.status == "Scheduled")).all())
+    )
     unassigned_leads_count = sum(1 for l in all_leads if not l.owner_id)
 
     return {
@@ -7381,6 +8144,7 @@ def dashboard_stats(
         ],
         "leadStagePie": lead_stage_pie,
         "leadSourcePie": lead_source_pie,
+        "leadSourceWinRate": lead_source_win_rate,
         "coursePie": course_pie,
         "revenueHealthPie": revenue_health_pie,
         "salesWorkload": sales_workload,
@@ -7392,7 +8156,8 @@ def dashboard_stats(
             "totalEnrollments": len(all_enrollments),
             "totalCollectedFees": round(total_enrollment_paid, 2),
             "totalOutstandingFees": round(total_enrollment_due, 2),
-            "pendingDemos": pending_demos_count,
+            "totalFeeBooked": round(total_enrollment_fee, 2),
+            "pendingDemos": pending_scheduled_count,
             "unassignedLeads": unassigned_leads_count,
             "todayTasksCount": today_tasks_count,
             "totalTasksCount": len(all_task_entries),
@@ -11069,6 +11834,32 @@ class LeadDemoUpdateRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class LeadWalkInCreateRequest(BaseModel):
+    scheduled_at: datetime
+    location: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LeadWalkInUpdateRequest(BaseModel):
+    scheduled_at: Optional[datetime] = None
+    status: Optional[str] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LeadWebinarCreateRequest(BaseModel):
+    scheduled_at: datetime
+    meeting_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class LeadWebinarUpdateRequest(BaseModel):
+    scheduled_at: Optional[datetime] = None
+    status: Optional[str] = None
+    meeting_url: Optional[str] = None
+    notes: Optional[str] = None
+
+
 class BackgroundDetailsUpdateRequest(BaseModel):
     details: Dict[str, str]
 
@@ -11134,18 +11925,24 @@ def get_leads(owner_id: Optional[int] = None, session: Session = Depends(get_ses
     _owner_names = {}
     if _owner_ids:
         _owner_names = {u.id: u.name for u in session.exec(select(User).where(User.id.in_(_owner_ids))).all()}
-    _next_fu, _next_demo = {}, {}
+    _next_fu, _next_demo, _next_walkin, _next_webinar = {}, {}, {}, {}
     if _lead_ids:
         _now = datetime.utcnow()
         for fu in session.exec(select(LeadFollowUp).where(LeadFollowUp.lead_id.in_(_lead_ids), LeadFollowUp.status == "Pending").order_by(LeadFollowUp.scheduled_at)).all():
             _next_fu.setdefault(fu.lead_id, fu.scheduled_at.isoformat())
         for dm in session.exec(select(LeadDemoSession).where(LeadDemoSession.lead_id.in_(_lead_ids), LeadDemoSession.status == "Scheduled").order_by(LeadDemoSession.scheduled_at)).all():
             _next_demo.setdefault(dm.lead_id, dm.scheduled_at.isoformat())
+        for wk in session.exec(select(LeadWalkIn).where(LeadWalkIn.lead_id.in_(_lead_ids), LeadWalkIn.status == "Scheduled").order_by(LeadWalkIn.scheduled_at)).all():
+            _next_walkin.setdefault(wk.lead_id, wk.scheduled_at.isoformat())
+        for wb in session.exec(select(LeadWebinar).where(LeadWebinar.lead_id.in_(_lead_ids), LeadWebinar.status == "Scheduled").order_by(LeadWebinar.scheduled_at)).all():
+            _next_webinar.setdefault(wb.lead_id, wb.scheduled_at.isoformat())
     for lead in leads:
         lead_item = lead.dict()
         lead_item["owner_name"] = _owner_names.get(lead.owner_id)
         lead_item["next_followup_at"] = _next_fu.get(lead.id)
         lead_item["next_demo_at"] = _next_demo.get(lead.id)
+        lead_item["next_walkin_at"] = _next_walkin.get(lead.id)
+        lead_item["next_webinar_at"] = _next_webinar.get(lead.id) or _next_demo.get(lead.id)
         if lead.course_interest_id:
             course = session.get(Course, lead.course_interest_id)
             if course:
@@ -11779,18 +12576,37 @@ def update_lead_demo_session(demo_session_id: int, body: LeadDemoUpdateRequest, 
     lead = session.get(Lead, demo.lead_id)
     _require_lead_demo_access(lead, actor)
     data = body.dict(exclude_unset=True)
-    if data.get("status") not in (None, "Scheduled", "Attended", "Missed", "Cancelled"):
-        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Missed, or Cancelled")
+    if data.get("status") not in (None, "Scheduled", "Attended", "Missed", "Not Attended", "Cancelled"):
+        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Missed, Not Attended, or Cancelled")
     for key, value in data.items():
         setattr(demo, key, value)
     demo.updated_at = datetime.utcnow()
     session.add(demo)
+    if data.get("status") in ("Missed", "Not Attended"):
+        lead.status = "Webinar Not Attended"
+        session.add(lead)
+    elif data.get("status") == "Attended":
+        lead.status = "Webinar Attended"
+        session.add(lead)
     session.commit()
     session.refresh(demo)
     return {"demo_session": _lead_demo_dict(demo)}
 
 
-LEAD_STAGES = ["New", "Contacted", "Not Responded", "Follow-up", "Demo", "Converted", "Lost"]
+LEAD_STAGES = [
+    "New",
+    "Contacted",
+    "Not Responded",
+    "Follow-up",
+    "Webinar Scheduled",
+    "Webinar Attended",
+    "Webinar Not Attended",
+    "Walk-in Scheduled",
+    "Walk-in Attended",
+    "Walk-in Not Attended",
+    "Converted",
+    "Lost",
+]
 _SALES_SCOPED_ROLES = ("Employee", "Intern", "SalesManager", "Sales", "Demo")
 _LEAD_SCHEDULE_ROLES = ["Admin", "Employee", "Intern", "SalesManager", "Sales", "Demo"]
 
@@ -11798,6 +12614,7 @@ _LEAD_SCHEDULE_ROLES = ["Admin", "Employee", "Intern", "SalesManager", "Sales", 
 class LeadFollowUpCreateRequest(BaseModel):
     scheduled_at: datetime
     notes: Optional[str] = None
+    tz_offset: Optional[int] = None  # JS getTimezoneOffset(); a naive scheduled_at is the scheduler's local time
 
 
 class LeadFollowUpUpdateRequest(BaseModel):
@@ -11828,24 +12645,67 @@ def _lead_followup_dict(fu: LeadFollowUp):
     }
 
 
+def _local_to_utc(value: datetime, tz_offset: Optional[int]) -> datetime:
+    """A datetime-local value from the browser (naive = the user's wall clock) as aware UTC."""
+    from modules import followups_core as fcore
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc)
+    east = -tz_offset if tz_offset is not None else fcore.default_tz_offset_minutes()
+    return value.replace(tzinfo=timezone(timedelta(minutes=east))).astimezone(timezone.utc)
+
+
+def _unified_followup_dict(fu: FollowUp) -> dict:
+    """_lead_followup_dict's shape for a follow-up kept in crm_follow_ups (routers/followups.py)."""
+    from modules import followups_core as fcore
+    return {
+        "id": fu.id,
+        "lead_id": fu.lead_id,
+        "scheduled_at": fcore.as_utc(fu.due_at).isoformat(),
+        "status": fu.status,
+        "notes": fu.notes,
+        "created_at": fcore.as_utc(fu.created_at).isoformat(),
+        "source": "followups",
+    }
+
+
 @app.post("/leads/{lead_id}/follow-ups")
 def schedule_lead_followup(lead_id: int, body: LeadFollowUpCreateRequest, session: Session = Depends(get_session)):
+    """Schedule a follow-up call with a lead. Follow-ups are unified on the Follow-ups system, so this
+    creates a follow_ups row (Follow-ups page and tab, reminders, AI); older lead_follow_ups rows stay
+    editable through PATCH /lead-follow-ups/{id} until they are closed."""
+    from modules import followups_core as fcore
     actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
     lead = session.get(Lead, lead_id)
     _require_lead_schedule_access(lead, actor)
-    fu = LeadFollowUp(
+    due = _local_to_utc(body.scheduled_at, body.tz_offset)
+    info = fcore.record_info(session, lead.id, None)
+    fu = FollowUp(
         tenant_id=lead.tenant_id or actor.tenant_id,
         lead_id=lead_id,
-        scheduled_at=body.scheduled_at,
+        contact_name=info.get("contact_name"),
+        contact_email=info.get("contact_email"),
+        company_name=info.get("label"),
+        title=f"Follow-up call: {lead.company_name or 'lead'}"[:500],
         notes=(body.notes or "").strip() or None,
+        channel="call",
+        due_at=due,
+        remind_at=due,
+        assigned_to=lead.owner_id or actor.id,
         created_by=actor.id,
+        source="manual",
     )
     lead.status = "Follow-up"
     session.add(fu)
     session.add(lead)
+    session.flush()
+    fcore.log_activity(session, fu, "Follow-up scheduled", f"Due {due.date().isoformat()} via call", actor.id)
+    if fu.assigned_to != actor.id:
+        fcore.notify(session, fu.assigned_to, fu.tenant_id, f"New follow-up assigned: {fu.title}",
+                     f"{actor.name or actor.email} scheduled a follow-up for {due.date().isoformat()}.",
+                     fcore.record_path(fu.lead_id, None))
     session.commit()
     session.refresh(fu)
-    return {"follow_up": _lead_followup_dict(fu)}
+    return {"follow_up": _unified_followup_dict(fu)}
 
 
 @app.patch("/lead-follow-ups/{follow_up_id}")
@@ -11867,6 +12727,126 @@ def update_lead_followup(follow_up_id: int, body: LeadFollowUpUpdateRequest, ses
     return {"follow_up": _lead_followup_dict(fu)}
 
 
+def _lead_walkin_dict(wk: LeadWalkIn):
+    return {
+        "id": wk.id,
+        "lead_id": wk.lead_id,
+        "scheduled_at": wk.scheduled_at.isoformat(),
+        "status": wk.status,
+        "location": wk.location,
+        "notes": wk.notes,
+        "created_at": wk.created_at.isoformat(),
+    }
+
+
+@app.post("/leads/{lead_id}/walk-ins")
+def schedule_lead_walkin(lead_id: int, body: LeadWalkInCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    lead = session.get(Lead, lead_id)
+    _require_lead_schedule_access(lead, actor)
+    wk = LeadWalkIn(
+        tenant_id=lead.tenant_id or actor.tenant_id,
+        lead_id=lead_id,
+        scheduled_at=body.scheduled_at,
+        location=(body.location or "").strip() or None,
+        notes=(body.notes or "").strip() or None,
+        created_by=actor.id,
+        status="Scheduled",
+    )
+    lead.status = "Walk-in Scheduled"
+    session.add(wk)
+    session.add(lead)
+    session.commit()
+    session.refresh(wk)
+    return {"walk_in": _lead_walkin_dict(wk)}
+
+
+@app.patch("/lead-walk-ins/{walk_in_id}")
+def update_lead_walkin(walk_in_id: int, body: LeadWalkInUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    wk = session.get(LeadWalkIn, walk_in_id)
+    if not wk:
+        raise HTTPException(status_code=404, detail="Walk-in record not found")
+    lead = session.get(Lead, wk.lead_id)
+    _require_lead_schedule_access(lead, actor)
+    data = body.dict(exclude_unset=True)
+    if data.get("status") not in (None, "Scheduled", "Attended", "Not Attended", "Missed", "Cancelled"):
+        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Not Attended, Missed, or Cancelled")
+    for key, value in data.items():
+        setattr(wk, key, value)
+    wk.updated_at = datetime.utcnow()
+    session.add(wk)
+    if data.get("status") == "Attended":
+        lead.status = "Walk-in Attended"
+        session.add(lead)
+    elif data.get("status") in ("Not Attended", "Missed"):
+        lead.status = "Walk-in Not Attended"
+        session.add(lead)
+    session.commit()
+    session.refresh(wk)
+    return {"walk_in": _lead_walkin_dict(wk)}
+
+
+def _lead_webinar_dict(wb: LeadWebinar):
+    return {
+        "id": wb.id,
+        "lead_id": wb.lead_id,
+        "scheduled_at": wb.scheduled_at.isoformat(),
+        "status": wb.status,
+        "meeting_url": wb.meeting_url,
+        "notes": wb.notes,
+        "created_at": wb.created_at.isoformat(),
+    }
+
+
+@app.post("/leads/{lead_id}/webinars")
+def schedule_lead_webinar(lead_id: int, body: LeadWebinarCreateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    lead = session.get(Lead, lead_id)
+    _require_lead_schedule_access(lead, actor)
+    wb = LeadWebinar(
+        tenant_id=lead.tenant_id or actor.tenant_id,
+        lead_id=lead_id,
+        scheduled_at=body.scheduled_at,
+        meeting_url=(body.meeting_url or "").strip() or None,
+        notes=(body.notes or "").strip() or None,
+        created_by=actor.id,
+        status="Scheduled",
+    )
+    lead.status = "Webinar Scheduled"
+    session.add(wb)
+    session.add(lead)
+    session.commit()
+    session.refresh(wb)
+    return {"webinar": _lead_webinar_dict(wb)}
+
+
+@app.patch("/lead-webinars/{webinar_id}")
+def update_lead_webinar(webinar_id: int, body: LeadWebinarUpdateRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
+    wb = session.get(LeadWebinar, webinar_id)
+    if not wb:
+        raise HTTPException(status_code=404, detail="Webinar record not found")
+    lead = session.get(Lead, wb.lead_id)
+    _require_lead_schedule_access(lead, actor)
+    data = body.dict(exclude_unset=True)
+    if data.get("status") not in (None, "Scheduled", "Attended", "Not Attended", "Missed", "Cancelled"):
+        raise HTTPException(status_code=422, detail="Choose Scheduled, Attended, Not Attended, Missed, or Cancelled")
+    for key, value in data.items():
+        setattr(wb, key, value)
+    wb.updated_at = datetime.utcnow()
+    session.add(wb)
+    if data.get("status") == "Attended":
+        lead.status = "Webinar Attended"
+        session.add(lead)
+    elif data.get("status") in ("Not Attended", "Missed"):
+        lead.status = "Webinar Not Attended"
+        session.add(lead)
+    session.commit()
+    session.refresh(wb)
+    return {"webinar": _lead_webinar_dict(wb)}
+
+
 @app.patch("/leads/{lead_id}/status")
 def update_lead_stage(lead_id: int, body: LeadStatusRequest, session: Session = Depends(get_session)):
     actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
@@ -11883,18 +12863,77 @@ def update_lead_stage(lead_id: int, body: LeadStatusRequest, session: Session = 
             fu.status = "Cancelled"
             fu.updated_at = now
             session.add(fu)
+        for fu in session.exec(select(FollowUp).where(FollowUp.lead_id == lead_id, FollowUp.status == "Pending")).all():
+            fu.status = "Cancelled"
+            fu.completed_at = fu.updated_at = datetime.now(timezone.utc)
+            fu.completed_by = actor.id
+            session.add(fu)
         for dm in session.exec(select(LeadDemoSession).where(LeadDemoSession.lead_id == lead_id, LeadDemoSession.status == "Scheduled")).all():
             dm.status = "Cancelled"
             dm.updated_at = now
             session.add(dm)
+        for wb in session.exec(select(LeadWebinar).where(LeadWebinar.lead_id == lead_id, LeadWebinar.status == "Scheduled")).all():
+            wb.status = "Cancelled"
+            wb.updated_at = now
+            session.add(wb)
     session.add(lead)
     session.commit()
     return {"ok": True, "status": lead.status}
 
 
+def _schedule_followup_items(session: Session, actor: User, include_done: bool) -> list:
+    """Important Dates rows for the Follow-ups system: every follow-up the actor may see on /followups (the same
+    scope), whether it is linked to a lead, a student, a client or only a contact, each with its record."""
+    from modules import followups_core as fcore
+    from routers import followups as followups_api, inbox as inbox_api
+    role = inbox_api._role_of(actor)
+    full = (role == "SuperAdmin" or (actor.email or "").lower() == "admin@serphawk.com"
+            or role in inbox_api.FULL_ACCESS_ROLES)
+    viewer = inbox_api.Viewer(user=actor, role=role, full_access=full,
+                              tenant_id=current_tenant_id.get() if role == "SuperAdmin" else actor.tenant_id)
+    stmt = followups_api._scope(select(FollowUp), viewer)
+    if not include_done:
+        stmt = stmt.where(FollowUp.status == fcore.OPEN)
+    rows = session.exec(stmt.order_by(FollowUp.due_at).limit(500)).all()
+    names = followups_api._names(session, rows)
+    lead_ids = {f.lead_id for f in rows if f.lead_id}
+    student_ids = {f.student_id for f in rows if f.student_id}
+    leads = {l.id: l for l in session.exec(select(Lead).where(Lead.id.in_(lead_ids))).all()} if lead_ids else {}
+    students = {st.id: st for st in session.exec(select(Student).where(Student.id.in_(student_ids))).all()} if student_ids else {}
+    local_tz = timezone(timedelta(minutes=fcore.default_tz_offset_minutes()))
+    items = []
+    for fu in rows:
+        if fu.student_id:
+            record = {"type": "student", "id": fu.student_id, "name": names["students"].get(fu.student_id)}
+        elif fu.client_id:
+            record = {"type": "client", "id": fu.client_id, "name": names["clients"].get(fu.client_id)}
+        elif fu.lead_id:
+            record = {"type": "lead", "id": fu.lead_id, "name": names["leads"].get(fu.lead_id)}
+        else:
+            record = None
+        lead, student = leads.get(fu.lead_id), students.get(fu.student_id)
+        due = fcore.as_utc(fu.due_at)
+        items.append({
+            "id": fu.id, "type": "followup", "source": "followups", "record": record,
+            "lead_id": fu.lead_id,
+            "lead_name": (record or {}).get("name") or fu.contact_name or fu.company_name or fu.contact_email or fu.title,
+            "phone": (student.phone if student else None) or (lead.phone if lead else None),
+            "email": fu.contact_email,
+            "course": student.course_interest if student else None,
+            "owner_id": fu.assigned_to, "owner_name": names["users"].get(fu.assigned_to),
+            "lead_status": lead.status if lead else None,
+            "scheduled_at": due.isoformat(), "status": fu.status, "notes": fu.notes, "title": fu.title,
+            "channel": fu.channel, "meeting_url": None,
+            # legacy rows hold naive local wall-clock times; compare in the default local zone
+            "_ts": due.astimezone(local_tz).replace(tzinfo=None),
+        })
+    return items
+
+
 @app.get("/schedule/upcoming")
 def get_upcoming_schedule(kind: str = "all", include_done: bool = False, session: Session = Depends(get_session)):
-    """Scheduled follow-ups and demos, nearest first. Sales roles only see their own leads."""
+    """Scheduled follow-ups, webinars and walk-ins, nearest first. Sales roles only see their own leads (and
+    the follow-ups /followups shows them)."""
     actor = _require_roles(session, _LEAD_SCHEDULE_ROLES)
     lead_q = select(Lead)
     if _normalize_role(actor.role) in _SALES_SCOPED_ROLES:
@@ -11903,8 +12942,6 @@ def get_upcoming_schedule(kind: str = "all", include_done: bool = False, session
     if tenant_id and tenant_id != 1:
         lead_q = lead_q.where(Lead.tenant_id == tenant_id)
     leads = {l.id: l for l in session.exec(lead_q).all()}
-    if not leads:
-        return {"items": []}
     lead_ids = list(leads.keys())
     owner_ids = list({l.owner_id for l in leads.values() if l.owner_id})
     owners = {u.id: u.name for u in session.exec(select(User).where(User.id.in_(owner_ids))).all()} if owner_ids else {}
@@ -11926,23 +12963,114 @@ def get_upcoming_schedule(kind: str = "all", include_done: bool = False, session
         }
 
     if kind in ("all", "followup"):
+        # Follow-ups live in two tables: lead_follow_ups (scheduled before the Follow-ups system, kept until
+        # closed; source "legacy") and crm_follow_ups (source "followups"). The page updates each through its own
+        # API, so every row says where it came from.
         fq = select(LeadFollowUp).where(LeadFollowUp.lead_id.in_(lead_ids))
         if not include_done:
             fq = fq.where(LeadFollowUp.status == "Pending")
         for fu in session.exec(fq).all():
-            items.append({**_base(leads[fu.lead_id]), "id": fu.id, "type": "followup", "scheduled_at": fu.scheduled_at.isoformat(),
-                          "status": fu.status, "notes": fu.notes, "meeting_url": None, "_ts": fu.scheduled_at})
-    if kind in ("all", "demo"):
+            items.append({**_base(leads[fu.lead_id]), "id": fu.id, "type": "followup", "source": "legacy",
+                          "scheduled_at": fu.scheduled_at.isoformat(), "status": fu.status, "notes": fu.notes,
+                          "meeting_url": None, "_ts": fu.scheduled_at})
+        items += _schedule_followup_items(session, actor, include_done)
+    if kind in ("all", "webinar", "demo"):
+        wb_q = select(LeadWebinar).where(LeadWebinar.lead_id.in_(lead_ids))
+        if not include_done:
+            wb_q = wb_q.where(LeadWebinar.status == "Scheduled")
+        for wb in session.exec(wb_q).all():
+            items.append({**_base(leads[wb.lead_id]), "id": wb.id, "type": "webinar", "scheduled_at": wb.scheduled_at.isoformat(),
+                          "status": wb.status, "notes": wb.notes, "meeting_url": wb.meeting_url, "location": None, "_ts": wb.scheduled_at})
         dq = select(LeadDemoSession).where(LeadDemoSession.lead_id.in_(lead_ids))
         if not include_done:
             dq = dq.where(LeadDemoSession.status == "Scheduled")
         for dm in session.exec(dq).all():
-            items.append({**_base(leads[dm.lead_id]), "id": dm.id, "type": "demo", "scheduled_at": dm.scheduled_at.isoformat(),
-                          "status": dm.status, "notes": dm.notes, "meeting_url": dm.meeting_url, "_ts": dm.scheduled_at})
+            items.append({**_base(leads[dm.lead_id]), "id": dm.id, "type": "webinar", "scheduled_at": dm.scheduled_at.isoformat(),
+                          "status": dm.status, "notes": dm.notes, "meeting_url": dm.meeting_url, "location": None, "_ts": dm.scheduled_at})
+    if kind in ("all", "walkin"):
+        wq = select(LeadWalkIn).where(LeadWalkIn.lead_id.in_(lead_ids))
+        if not include_done:
+            wq = wq.where(LeadWalkIn.status == "Scheduled")
+        for wk in session.exec(wq).all():
+            items.append({**_base(leads[wk.lead_id]), "id": wk.id, "type": "walkin", "scheduled_at": wk.scheduled_at.isoformat(),
+                          "status": wk.status, "notes": wk.notes, "meeting_url": None, "location": wk.location, "_ts": wk.scheduled_at})
     items.sort(key=lambda i: i["_ts"])
     for i in items:
         i.pop("_ts", None)
     return {"items": items}
+
+
+@app.get("/leads/sources/analytics")
+def get_lead_sources_analytics(session: Session = Depends(get_session)):
+    """Comprehensive analytics on lead sources: counts, conversions, win rate %, and recent inquiries."""
+    actor = _require_roles(session, ["Admin", "SalesManager", "Employee", "Intern", "Demo", "Sales"])
+    lead_q = select(Lead)
+    if _normalize_role(actor.role) in _SALES_SCOPED_ROLES:
+        lead_q = lead_q.where(Lead.owner_id == actor.id)
+    tenant_id = current_tenant_id.get()
+    if tenant_id and tenant_id != 1:
+        lead_q = lead_q.where(Lead.tenant_id == tenant_id)
+
+    leads = session.exec(lead_q.order_by(Lead.created_at.desc())).all()
+    total_leads = len(leads)
+
+    source_buckets = {}
+    for l in leads:
+        src = (l.source or "Website").strip() or "Website"
+        b = source_buckets.setdefault(src, {"total": 0, "converted": 0, "lost": 0, "active": 0})
+        b["total"] += 1
+        is_conv = bool(l.is_converted or l.converted_student_id or (l.status or "") == "Converted")
+        is_lost = bool((l.status or "").lower() == "lost")
+        if is_conv:
+            b["converted"] += 1
+        elif is_lost:
+            b["lost"] += 1
+        else:
+            b["active"] += 1
+
+    sources_list = []
+    for src, b in sorted(source_buckets.items(), key=lambda x: -x[1]["total"]):
+        wr = round((b["converted"] / b["total"]) * 100, 1) if b["total"] > 0 else 0.0
+        share = round((b["total"] / total_leads) * 100, 1) if total_leads > 0 else 0.0
+        sources_list.append({
+            "source": src,
+            "total": b["total"],
+            "converted": b["converted"],
+            "lost": b["lost"],
+            "active": b["active"],
+            "win_rate": wr,
+            "inquiry_share": share,
+        })
+
+    total_converted = sum(b["converted"] for b in source_buckets.values())
+    total_lost = sum(b["lost"] for b in source_buckets.values())
+    overall_win_rate = round((total_converted / total_leads) * 100, 1) if total_leads > 0 else 0.0
+
+    best_source = max(sources_list, key=lambda s: (s["win_rate"], s["converted"]))["source"] if sources_list else None
+
+    recent = []
+    for l in leads[:25]:
+        recent.append({
+            "id": l.id,
+            "company_name": l.company_name,
+            "source": l.source or "Website",
+            "status": l.status or "New",
+            "is_converted": bool(l.is_converted or l.converted_student_id),
+            "website": l.website,
+            "created_at": l.created_at.isoformat() if l.created_at else None,
+        })
+
+    return {
+        "summary": {
+            "total_leads": total_leads,
+            "total_converted": total_converted,
+            "total_lost": total_lost,
+            "overall_win_rate": overall_win_rate,
+            "best_source": best_source,
+        },
+        "sources": sources_list,
+        "recent": recent,
+    }
 
 
 @app.patch("/leads/{lead_id}/background-details")
@@ -12088,6 +13216,7 @@ def generate_lead_outbound_draft(lead_id: int, session: Session = Depends(get_se
             spanish_body=data.get("spanish_body", ""),
             draft_json=_json.dumps(data),
             manual=True,
+            status="Draft",  # generated, never sent — keeps it out of the Inbox's Sent view
             sent_at=datetime.utcnow()
         )
         session.add(draft)
@@ -13824,14 +14953,23 @@ def _quote_email_content(q: CRMQuote, session: Session, recipient_name=None):
 
 
 def _quote_smtp_sender(session: Session):
-    """Resolve the sender mailbox used for quote emails (per-tenant settings first,
-    then env vars). Returns (sender_email, password, smtp_server, smtp_port)."""
+    """Resolve the sender mailbox used for quote / order / PO emails: the user's own Email Integration,
+    then per-tenant settings, then env vars. Returns (sender_email, password, smtp_server, smtp_port)."""
     import os
 
     sender = None
     password = None
     smtp_server = None
     smtp_port = None
+
+    # The logged-in user's own Email Integration (Email Agent → Settings) comes first.
+    integ = _get_user_email_integration(session, current_salesperson_id.get())
+    if integ is not None and integ.is_active and integ.email and integ.encrypted_app_password and integ.smtp_host:
+        try:
+            from modules.email_crypto import decrypt_app_password
+            return integ.email, decrypt_app_password(integ.encrypted_app_password), integ.smtp_host, int(integ.smtp_port or 587)
+        except Exception as e:
+            print(f"[mail] could not use the user's Email Integration, falling back: {type(e).__name__}")
 
     tenant_id = current_tenant_id.get()
     if tenant_id:
@@ -18024,14 +19162,32 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
         .where(SentEmail.lead_id == lead_id)
         .order_by(SentEmail.sent_at.desc())
     ).all()
-    return {"emails": [e.dict() for e in emails]}
+    email_ids = [e.id for e in emails]
+    replies_by_email: dict[int, list] = {}
+    if email_ids:
+        all_replies = session.exec(
+            select(EmailReply)
+            .where(EmailReply.sent_email_id.in_(email_ids))
+            .order_by(EmailReply.received_at.asc())
+        ).all()
+        for r in all_replies:
+            replies_by_email.setdefault(r.sent_email_id, []).append({
+                "id": r.id,
+                "from_address": r.from_address,
+                "subject": r.subject,
+                "body_text": r.body_text,
+                "body_text_full": r.body_text_full,
+                "body_html": r.body_html,
+                "received_at": r.received_at.isoformat() if r.received_at else None,
+            })
+    return {"emails": [{**e.dict(), "replies": replies_by_email.get(e.id, [])} for e in emails]}
 
 
 # ============================================================
 # TRAINING INSTITUTE API ENDPOINTS
 # ============================================================
 
-from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp
+from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn, LeadWebinar
 
 # --- Create tables on startup (migration) ---
 def _create_institute_tables():
@@ -18039,7 +19195,7 @@ def _create_institute_tables():
     from database import engine
     inspector = inspect(engine)
     existing = inspector.get_table_names()
-    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp]
+    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn, LeadWebinar]
     from sqlmodel import SQLModel
     for model in tables_to_create:
         if model.__tablename__ not in existing:
