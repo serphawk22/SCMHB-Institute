@@ -162,7 +162,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!loading) {
-      if (!isAuthenticated && pathname !== '/login' && pathname !== '/signup' && pathname !== '/' && !pathname?.startsWith('/demo_showcase') && pathname !== '/reset-password') {
+      if (!isAuthenticated && pathname !== '/login' && pathname !== '/signup' && pathname !== '/' && pathname !== '/opening' && !pathname?.startsWith('/demo_showcase') && pathname !== '/reset-password') {
         router.replace('/login');
       } else if (isAuthenticated && (pathname === '/login' || pathname === '/signup')) {
         if (user?.role === 'Supplier') {
@@ -220,7 +220,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('crm_user');
     setUser(null);
     setIsAuthenticated(false);
-    router.replace('/login');
+    router.replace('/opening');
   };
 
   return (
