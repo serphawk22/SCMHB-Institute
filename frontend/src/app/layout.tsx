@@ -58,11 +58,16 @@ function ClientLayout({ children }: { children: React.ReactNode }) {
 const inter = Inter({ subsets: ["latin"], preload: false });
 
 function AppContent({ children }: { children: React.ReactNode }) {
-  const { role, loading } = useRole();
+  const { role, loading, isAuthenticated, user } = useRole();
   const pathname = usePathname();
-  const isClient = role === "Client";
-  const isDeveloper = role === "ProjectMember";
-  const isAdminOrEmployee = role === "Admin" || role === "Employee" || role === "Intern" || role === "SalesManager" || role === "Demo";
+  // Logged-out users have user === null (RoleContext defaults role to
+  // 'Client', so role alone must NOT select an authenticated shell —
+  // otherwise / and /opening render the SERP Hawk ClientSidebar with a
+  // blank main area on localhost:3000 after logout).
+  const isLoggedIn = !!isAuthenticated && !!user;
+  const isClient = isLoggedIn && role === "Client";
+  const isDeveloper = isLoggedIn && role === "ProjectMember";
+  const isAdminOrEmployee = isLoggedIn && (role === "Admin" || role === "Employee" || role === "Intern" || role === "SalesManager" || role === "Demo");
   const showChatbot = !!role && role !== "Client"; // Show for ALL roles except unauthenticated Client
 
   useEffect(() => {
@@ -112,7 +117,7 @@ function AppContent({ children }: { children: React.ReactNode }) {
     return <GlobalLoader />;
   }
 
-  if (pathname === "/login" || pathname === "/signup" || pathname === "/demo_showcase" || pathname === "/reset-password" || pathname?.startsWith("/demo_showcase")) {
+  if (pathname === "/login" || pathname === "/signup" || pathname === "/demo_showcase" || pathname === "/reset-password" || pathname === "/opening" || pathname?.startsWith("/demo_showcase")) {
     return <main className="h-screen w-full">{children}</main>;
   }
 
