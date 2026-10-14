@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign In — SCM Hub Operations Portal | Powered by SERP Hawk CRM</title>
+  <meta name="description" content="Sign in to SCM Hub Operations Portal to manage admissions, student counseling, and enrollment operations." />
+  
+  <link rel="icon" type="image/png" href="assets/scm-hub-logo-c.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+</head>
+<body>
+
+  <div class="login-page-wrapper">
+    <!-- LEFT PANEL: Brand & Value Proposition -->
+    <div class="login-brand-panel">
+      <div class="login-brand-header">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <a href="index.html" style="display: flex; align-items: center; gap: 8px;">
+            <img src="assets/scm-hub-logo.png" alt="SCM Hub Logo" style="height: 42px; width: auto;" onerror="this.src='assets/scm-hub-logo-c.png'" />
+          </a>
+          <a href="index.html" class="btn btn-sm" style="background: rgba(255,255,255,0.12); color: #fff; border-radius: 6px;">
+            ← Back to Home
+          </a>
+        </div>
+      </div>
+
+      <div class="login-brand-content">
+        <div class="badge badge-primary" style="margin-bottom: 1.25rem; background: rgba(16,185,129,0.2); color: #34D399; border-color: rgba(16,185,129,0.3);">
+          B2C ADMISSIONS OPERATIONS
+        </div>
+
+        <h1 class="login-brand-title">
+          Welcome to Your Operations Workspace.
+        </h1>
+
+        <p class="login-brand-desc">
+          Manage prospective student inquiries, admissions pipelines, counselor follow-ups, and fee collections from one connected platform.
+        </p>
+
+        <!-- Operational Telemetry Stat Pills -->
+        <div class="login-stat-pill-row">
+          <div class="login-stat-pill">
+            <div class="val">248</div>
+            <div class="lbl">Active Leads</div>
+          </div>
+          <div class="login-stat-pill">
+            <div class="val">42</div>
+            <div class="lbl">Enrollments</div>
+          </div>
+          <div class="login-stat-pill">
+            <div class="val">100%</div>
+            <div class="lbl">Placement Aim</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="login-brand-footer" style="position: relative; z-index: 2; font-size: 0.78rem; color: #94A3B8; border-top: 1px solid rgba(255,255,255,0.12); padding-top: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          SCM Hub Institute • Infopark Kochi
+        </div>
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span>Powered by</span>
+          <strong style="color: #60A5FA;">SERP Hawk CRM</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: Enterprise Login Card -->
+    <div class="login-form-panel">
+      <!-- Top Right Floating Controls -->
+      <div style="position: absolute; top: 20px; right: 24px; display: flex; align-items: center; gap: 10px;">
+        <button class="theme-toggle-btn" aria-label="Toggle Theme" title="Toggle Theme">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+      </div>
+
+      <div class="login-card-container">
+        <div class="login-card-header">
+          <h2>Sign in to your account</h2>
+          <p>Enter your institute credentials to access the operations hub.</p>
+        </div>
+
+        <!-- Inline Validation Error Alert -->
+        <div id="loginError" style="display: none; background: #FEF2F2; border: 1px solid #FCA5A5; color: #B91C1C; padding: 0.75rem 1rem; border-radius: 8px; font-size: 0.84rem; margin-bottom: 1.25rem;">
+          Please enter valid credentials.
+        </div>
+
+        <form id="loginForm" novalidate>
+          <!-- Email Field -->
+          <div class="form-group">
+            <label for="emailInput" class="form-label">Work Email Address</label>
+            <div class="form-input-wrapper">
+              <input
+                type="email"
+                id="emailInput"
+                class="form-input"
+                placeholder="name@scmhub.com"
+                value="admin@serphawk.com"
+                required
+                autocomplete="email"
+              />
+            </div>
+          </div>
+
+          <!-- Password Field -->
+          <div class="form-group">
+            <label for="passwordInput" class="form-label">Password</label>
+            <div class="form-input-wrapper">
+              <input
+                type="password"
+                id="passwordInput"
+                class="form-input"
+                placeholder="••••••••••••"
+                value="Admin123!"
+                required
+                autocomplete="current-password"
+              />
+              <button type="button" class="input-icon-right" id="togglePasswordBtn" aria-label="Show or Hide Password">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Options Row -->
+          <div class="form-options-row">
+            <label class="checkbox-label">
+              <input type="checkbox" id="rememberMe" checked style="accent-color: var(--scm-green);" />
+              <span>Remember me</span>
+            </label>
+          </div>
+
+          <!-- Submit Button -->
+          <button type="submit" class="btn btn-primary" id="submitLoginBtn" style="width: 100%; padding: 0.85rem; font-size: 0.95rem;">
+            <span>Sign In </span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </button>
+        </form>
+
+        
+
+        <div style="margin-top: 1.5rem; text-align: center; font-size: 0.78rem; color: var(--text-muted);">
+          Protected under SCM Hub Enterprise Security 
+        
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/main.js"></script>
+  <script src="js/auth.js"></script>
+</body>
+</html>

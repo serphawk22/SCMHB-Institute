@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Signed Out — SCM Hub Operations Portal | Powered by SERP Hawk CRM</title>
+  <meta name="description" content="You have successfully signed out of the SCM Hub Operations Portal." />
+  
+  <link rel="icon" type="image/png" href="assets/scm-hub-logo-c.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+</head>
+<body>
+
+  <!-- Floating Theme Toggle -->
+  <div style="position: absolute; top: 24px; right: 24px; z-index: 10;">
+    <button class="theme-toggle-btn" aria-label="Toggle Theme" title="Toggle Theme">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+
+  <div class="logout-page-wrapper">
+    <div class="logout-card">
+      <div style="margin-bottom: 2rem;">
+        <img src="assets/scm-hub-logo-c.png" alt="SCM Hub Logo" style="height: 44px; width: auto; margin: 0 auto;" onerror="this.src='assets/scm-hub-logo.png'" />
+      </div>
+
+      <!-- Success Icon -->
+      <div class="logout-icon-success">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+
+      <h1 class="logout-title">You Have Successfully Signed Out</h1>
+      <p class="logout-desc">
+        Thank you for using the SCM Hub Operations Portal powered by SERP Hawk CRM. Your authenticated session has been securely terminated.
+      </p>
+
+      <div class="logout-btn-group">
+        <a href="login.html" class="btn btn-primary btn-lg">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+          <span>Sign In Again</span>
+        </a>
+
+        <a href="https://scmhub.com/" target="_blank" rel="noopener" class="btn btn-secondary btn-lg">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          <span>Return to SCM Hub Website</span>
+        </a>
+
+        <a href="index.html" class="btn btn-outline btn-sm" style="margin-top: 0.5rem;">
+          View Platform Overview
+        </a>
+      </div>
+
+      <div style="margin-top: 2.5rem; font-size: 0.78rem; color: var(--text-muted); border-top: 1px solid var(--border-subtle); padding-top: 1.25rem;">
+        SCM Hub Institute • Infopark Kochi, Kerala<br />
+        Operations Engine Powered by <strong>SERP Hawk CRM</strong>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/main.js"></script>
+  <script src="js/auth.js"></script>
+  <script>
+    // Logout: clear the session and return to the landing page (index.html only)
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.clearUserSession) {
+        window.clearUserSession();
+      }
+      window.location.replace('index.html');
+    });
+  </script>
+</body>
+</html>

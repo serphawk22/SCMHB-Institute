@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SCM Hub B2C Operations Portal — Powered by SERP Hawk CRM</title>
+  <meta name="description" content="Centralized B2C operations platform for SCM Hub. Empower admissions, counseling, student enrollment, fee collection, and team intelligence." />
+  
+  <!-- Favicon & Stylesheet -->
+  <link rel="icon" type="image/png" href="assets/scm-hub-logo-c.png" />
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+</head>
+<body>
+
+  <!-- =========================================================================
+       1. NAVIGATION BAR
+       ========================================================================= -->
+  <header class="landing-nav" id="topNav">
+    <div class="container nav-container">
+      <div class="brand-wrapper">
+        <a href="index.html" class="brand-logo-link" style="display: flex; align-items: center; gap: 8px;">
+          <img src="assets/scm-hub-logo-c.png" alt="SCM Hub Logo" class="brand-logo-img" onerror="this.src='assets/scm-hub-logo.png'" />
+        </a>
+        <div class="brand-attribution">
+          <span>POWERED BY</span>
+          SERP HAWK CRM
+        </div>
+      </div>
+
+      <nav class="nav-links" id="navLinks">
+        <a href="#overview" class="nav-link active">Overview</a>
+        <a href="#impact" class="nav-link">Business Impact</a>
+        <a href="#workflow" class="nav-link">Workflow</a>
+        <a href="#features" class="nav-link">Features</a>
+        <a href="#preview" class="nav-link">Dashboard Preview</a>
+        <a href="#analytics" class="nav-link">Analytics</a>
+        <a href="#contact" class="nav-link">Contact</a>
+      </nav>
+
+      <div class="nav-actions">
+        <!-- Light / Dark Theme Toggle Button -->
+        <button class="theme-toggle-btn" id="themeToggleBtn" aria-label="Toggle Theme" title="Toggle Theme">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+
+        <a href="login.html" class="btn btn-secondary btn-sm" id="navSignInBtn">Sign In</a>
+
+        <!-- Mobile Menu Hamburger -->
+        <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Toggle Menu">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- =========================================================================
+       2. HERO SECTION
+       ========================================================================= -->
+  <section class="hero-section" id="overview">
+    <div class="container hero-container-clean">
+      <div class="hero-content-clean">
+        <div class="hero-badge-strip">
+          <span class="dot"></span>
+          <span>SCM HUB B2C STUDENT OPERATIONS SUITE</span>
+          <span style="opacity: 0.5;">•</span>
+          <span style="color: var(--scm-blue);">SERP HAWK CRM ENGINE</span>
+        </div>
+
+        <h1 class="hero-title">
+          Every Student Journey. <br />
+          <span class="highlight-green">One Connected</span> <br />
+          <span class="highlight-navy">Operations Platform.</span>
+        </h1>
+
+        <p class="hero-subtitle">
+          Empower SCM Hub's B2C operations with centralized lead management, admissions tracking, student follow-ups, fee visibility, and actionable business intelligence powered by SERP Hawk CRM.
+        </p>
+
+        <div class="hero-cta-group">
+          <a href="#features" class="btn btn-primary btn-lg" id="heroExploreBtn">
+            <span>Explore Platform</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+          </a>
+          <a href="login.html" class="btn btn-secondary btn-lg" id="heroSignInBtn">
+            <span>Sign In</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </a>
+        </div>
+
+        <div class="hero-trust-badge">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+          <span>One connected workspace for admissions, student engagement, and operational visibility.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       3. COMPACT DASHBOARD PREVIEW
+       ========================================================================= -->
+  <section class="section-block compact-dash-section" id="preview">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-eyebrow">Live Operations Preview</div>
+        <h2 class="section-title">SCM Hub Operations Cockpit</h2>
+        <p class="section-description">
+          A compact real-time dashboard providing instant visibility into student acquisition, admissions pipeline, and fee collection health — powered by SERP Hawk CRM.
+        </p>
+      </div>
+
+      <div class="compact-dash-card">
+        <!-- Top Bar -->
+        <div class="compact-dash-topbar">
+          <div class="compact-dash-brand">
+            <img src="assets/scm-hub-logo-c.png" alt="SCM Hub" class="compact-dash-logo" onerror="this.style.display='none'" />
+            <span class="compact-dash-title">SCM Hub Operations Summary</span>
+            <span class="badge badge-success">● Live Demo Mode</span>
+          </div>
+          <div class="compact-dash-controls">
+            <select id="dateRangeSelector" class="compact-dash-select">
+              <option>📅 Oct 2026 (MTD)</option>
+              <option>📅 Last 30 Days</option>
+              <option>📅 Financial Year 2026</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Metric KPI Cards Row -->
+        <div class="compact-kpi-grid">
+          <div class="compact-kpi-card">
+            <div class="compact-kpi-header">
+              <span class="compact-kpi-label">Total Leads</span>
+              <div class="compact-kpi-icon icon-navy">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </div>
+            </div>
+            <div class="compact-kpi-val">248</div>
+            <div class="compact-kpi-sub"><span class="trend-up">↑ +20.1%</span> vs last month</div>
+          </div>
+
+          <div class="compact-kpi-card">
+            <div class="compact-kpi-header">
+              <span class="compact-kpi-label">Active Prospects</span>
+              <div class="compact-kpi-icon icon-blue">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              </div>
+            </div>
+            <div class="compact-kpi-val">126</div>
+            <div class="compact-kpi-sub">Counseling &amp; verification</div>
+          </div>
+
+          <div class="compact-kpi-card">
+            <div class="compact-kpi-header">
+              <span class="compact-kpi-label">Enrollments</span>
+              <div class="compact-kpi-icon icon-green">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              </div>
+            </div>
+            <div class="compact-kpi-val">42</div>
+            <div class="compact-kpi-sub"><span class="trend-up">33.3%</span> conversion rate</div>
+          </div>
+
+          <div class="compact-kpi-card">
+            <div class="compact-kpi-header">
+              <span class="compact-kpi-label">Pipeline Value</span>
+              <div class="compact-kpi-icon icon-purple">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              </div>
+            </div>
+            <div class="compact-kpi-val">₹18.75L</div>
+            <div class="compact-kpi-sub">126 active prospects</div>
+          </div>
+
+          <div class="compact-kpi-card">
+            <div class="compact-kpi-header">
+              <span class="compact-kpi-label">Fees Collected</span>
+              <div class="compact-kpi-icon icon-emerald">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              </div>
+            </div>
+            <div class="compact-kpi-val">₹12.4L</div>
+            <div class="compact-kpi-sub">₹4.8L outstanding balance</div>
+          </div>
+        </div>
+
+        <!-- Charts + Activity Split Row -->
+        <div class="compact-dash-middle">
+          <!-- Fee Collection Mini-Chart -->
+          <div class="compact-chart-box">
+            <div class="compact-chart-header">
+              <h4>📊 Monthly Fee Collection</h4>
+              <span class="badge badge-success">Collected vs Receivables</span>
+            </div>
+            <div class="compact-chart-canvas">
+              <canvas id="financialOverviewChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Admissions Pipeline Mini-Chart -->
+          <div class="compact-chart-box">
+            <div class="compact-chart-header">
+              <h4>🎓 Admissions Pipeline</h4>
+              <span class="badge badge-navy">248 Students</span>
+            </div>
+            <div class="compact-chart-canvas">
+              <canvas id="admissionsPipelineChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Recent Activity Feed -->
+          <div class="compact-activity-box">
+            <div class="compact-chart-header">
+              <h4>⚡ Recent Activity</h4>
+              <span class="badge badge-primary">Live Updates</span>
+            </div>
+            <div class="compact-activity-list">
+              <div class="activity-item">
+                <span class="act-dot green"></span>
+                <div class="act-details">
+                  <strong>Enrollment Confirmed</strong>
+                  <span>Arjun Nair — PG Logistics</span>
+                  <time>2h ago</time>
+                </div>
+              </div>
+              <div class="activity-item">
+                <span class="act-dot blue"></span>
+                <div class="act-details">
+                  <strong>Fee Payment Received</strong>
+                  <span>₹35,000 — Priya Menon</span>
+                  <time>3h ago</time>
+                </div>
+              </div>
+              <div class="activity-item">
+                <span class="act-dot amber"></span>
+                <div class="act-details">
+                  <strong>New Inquiry Logged</strong>
+                  <span>Riya Sharma via Web Form</span>
+                  <time>4h ago</time>
+                </div>
+              </div>
+              <div class="activity-item">
+                <span class="act-dot purple"></span>
+                <div class="act-details">
+                  <strong>Counseling Call Completed</strong>
+                  <span>Arun K. with Rahul Suresh</span>
+                  <time>6h ago</time>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Telemetry Notice -->
+        <div class="compact-dash-footer">
+          <span>* Demo telemetry presented in Indian Rupees (INR) for SCM Hub B2C student operations.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       4. BUSINESS IMPACT
+       ========================================================================= -->
+  <section class="section-block" id="impact">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-eyebrow">Enterprise Value Proposition</div>
+        <h2 class="section-title">Designed Specifically for SCM Hub Admissions</h2>
+        <p class="section-description">
+          SCM Hub delivers world-class logistics &amp; supply chain education. SERP Hawk CRM powers operational velocity, ensuring zero lead leakage and total visibility across the student lifecycle.
+        </p>
+      </div>
+
+      <div class="impact-grid">
+        <!-- Card 1 -->
+        <div class="impact-card">
+          <div class="impact-icon-wrapper impact-icon-green">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <h3 class="impact-card-title">Centralized Lead Management</h3>
+          <p class="impact-card-desc">
+            Capture student inquiries instantly from website forms, phone calls, walk-ins, and digital campaigns into one organized database.
+          </p>
+          <div class="impact-card-tags">
+            <span class="impact-tag">Web Inquiries</span>
+            <span class="impact-tag">Multi-Channel</span>
+            <span class="impact-tag">Single View</span>
+          </div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="impact-card">
+          <div class="impact-icon-wrapper impact-icon-navy">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          </div>
+          <h3 class="impact-card-title">Structured Admissions Tracking</h3>
+          <p class="impact-card-desc">
+            Track student progress step-by-step from initial inquiry through counseling, batch allocation, and official enrollment.
+          </p>
+          <div class="impact-card-tags">
+            <span class="impact-tag">Stage Pipeline</span>
+            <span class="impact-tag">Batch Selection</span>
+            <span class="impact-tag">Status Audit</span>
+          </div>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="impact-card">
+          <div class="impact-icon-wrapper impact-icon-blue">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+          </div>
+          <h3 class="impact-card-title">Fee Collection Visibility</h3>
+          <p class="impact-card-desc">
+            Maintain complete clarity over collected tuition fees, scheduled payment installments, and pending receivables in INR.
+          </p>
+          <div class="impact-card-tags">
+            <span class="impact-tag">Installment Audits</span>
+            <span class="impact-tag">INR Tracking</span>
+            <span class="impact-tag">Fee Receipts</span>
+          </div>
+        </div>
+
+        <!-- Card 4 -->
+        <div class="impact-card">
+          <div class="impact-icon-wrapper impact-icon-gold">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
+          </div>
+          <h3 class="impact-card-title">Team Performance Insights</h3>
+          <p class="impact-card-desc">
+            Evaluate counselor activity, completed follow-up calls, task completion velocity, and conversion efficiency.
+          </p>
+          <div class="impact-card-tags">
+            <span class="impact-tag">Counselor KPIs</span>
+            <span class="impact-tag">Task Sheet</span>
+            <span class="impact-tag">Conversion Rate</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       5. STUDENT JOURNEY WORKFLOW
+       ========================================================================= -->
+  <section class="section-block alt-bg" id="workflow">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-eyebrow">End-to-End Operational Lifecycle</div>
+        <h2 class="section-title">Student Journey Workflow</h2>
+        <p class="section-description">
+          A structured six-step workflow guiding prospective students from initial inquiry to enrolled student status.
+        </p>
+      </div>
+
+      <div class="workflow-timeline">
+        <!-- Step 1 -->
+        <div class="workflow-step">
+          <div class="step-node">01</div>
+          <div class="step-number">Step 1</div>
+          <h4 class="step-title">Lead Captured</h4>
+          <p class="step-desc">Student inquiry captured automatically from website forms, helpline calls, or campus visits.</p>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="workflow-step">
+          <div class="step-node">02</div>
+          <div class="step-number">Step 2</div>
+          <h4 class="step-title">Lead Assigned</h4>
+          <p class="step-desc">System allocates candidate to an admissions counselor based on workload and program domain.</p>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="workflow-step">
+          <div class="step-node">03</div>
+          <div class="step-number">Step 3</div>
+          <h4 class="step-title">Counseling</h4>
+          <p class="step-desc">Counselor logs career goals, program details, curriculum alignment, and campus visit details.</p>
+        </div>
+
+        <!-- Step 4 -->
+        <div class="workflow-step">
+          <div class="step-node">04</div>
+          <div class="step-number">Step 4</div>
+          <h4 class="step-title">Follow-up</h4>
+          <p class="step-desc">Scheduled follow-up reminders prompt timely calls, document submissions, or demo sessions.</p>
+        </div>
+
+        <!-- Step 5 -->
+        <div class="workflow-step">
+          <div class="step-node">05</div>
+          <div class="step-number">Step 5</div>
+          <h4 class="step-title">Enrollment</h4>
+          <p class="step-desc">Application approved, course seat confirmed, batch assigned, and student profile provisioned.</p>
+        </div>
+
+        <!-- Step 6 -->
+        <div class="workflow-step">
+          <div class="step-node">06</div>
+          <div class="step-number">Step 6</div>
+          <h4 class="step-title">Fee Tracking</h4>
+          <p class="step-desc">Payment schedule setup, initial fee recorded, digital receipt issued, and metrics updated.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       6. PLATFORM FEATURES
+       ========================================================================= -->
+  <section class="section-block" id="features">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-eyebrow">Core Capabilities</div>
+        <h2 class="section-title">Platform Features</h2>
+        <p class="section-description">
+          A comprehensive suite of tools enabling SCM Hub's B2C operations team to manage every aspect of admissions efficiently.
+        </p>
+      </div>
+
+      <div class="features-grid">
+        <!-- 1 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Lead &amp; Contact Management</h4>
+            <p>Maintain complete student profiles, inquiry channels, communication logs, and history in one location.</p>
+          </div>
+        </div>
+
+        <!-- 2 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Course Inquiries</h4>
+            <p>Track inquiry statuses across PG Logistics, Professional Diploma, Air Freight, and Warehouse programs.</p>
+          </div>
+        </div>
+
+        <!-- 3 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Admissions Pipeline</h4>
+            <p>Visual stage-by-stage pipeline tracking conversion progression from first touchpoint to batch allotment.</p>
+          </div>
+        </div>
+
+        <!-- 4 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Follow-ups &amp; Counseling</h4>
+            <p>Automated task queues and reminder alerts to ensure counselors never miss scheduled student follow-ups.</p>
+          </div>
+        </div>
+
+        <!-- 5 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Calls &amp; Meetings</h4>
+            <p>Log phone interactions, schedule campus visits at Infopark Kochi, and record session outcomes instantly.</p>
+          </div>
+        </div>
+
+        <!-- 6 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Student Records</h4>
+            <p>Centralized student repository containing qualification details, documents, and batch assignment records.</p>
+          </div>
+        </div>
+
+        <!-- 7 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Enrollments &amp; Fee Tracking</h4>
+            <p>Track confirmed course seats, tuition fee collections, installment balances, and issue digital receipts.</p>
+          </div>
+        </div>
+
+        <!-- 8 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Reports &amp; Analytics</h4>
+            <p>Actionable intelligence reports on acquisition channels, conversion trends, and financial performance.</p>
+          </div>
+        </div>
+
+        <!-- 9 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Email Agent &amp; Automation</h4>
+            <p>Automate course brochure distribution, follow-up emails, and admission verification notifications.</p>
+          </div>
+        </div>
+
+        <!-- 10 -->
+        <div class="feature-box">
+          <div class="feature-icon-wrapper">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+          </div>
+          <div class="feature-content">
+            <h4>Team Management</h4>
+            <p>Manage counselor assignments, monitor daily task sheets, track workload distribution, and evaluate performance.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       7. ANALYTICS & INSIGHTS
+       ========================================================================= -->
+  <section class="section-block alt-bg" id="analytics">
+    <div class="container">
+      <div class="section-header">
+        <div class="section-eyebrow">Institutional Intelligence</div>
+        <h2 class="section-title">Analytics &amp; Operational Insights</h2>
+        <p class="section-description">
+          Compact, visual metrics highlighting key performance drivers across student acquisition, admissions conversion, and fee collection health.
+        </p>
+      </div>
+
+      <div class="analytics-six-grid">
+
+        <!-- 1. Lead Acquisition Sources -->
+        <div class="donut-card">
+          <div class="donut-card-top">
+            <div class="donut-card-title"><span style="color:var(--scm-green);">●</span> Lead Acquisition Sources</div>
+            <span class="badge badge-primary">Channel Share</span>
+          </div>
+          <div class="donut-card-body">
+            <div class="donut-chart-wrapper"><canvas id="chartAcquisitionSources"></canvas></div>
+            <div class="donut-legend-list">
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#0C4F3E;"></span><span>Website Forms</span></div><span class="donut-legend-right">142</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#006AB3;"></span><span>Organic Search</span></div><span class="donut-legend-right">48</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#E11D48;"></span><span>Social Ads</span></div><span class="donut-legend-right">26</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#8B5CF6;"></span><span>Referral / Alumni</span></div><span class="donut-legend-right">18</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#F59E0B;"></span><span>Walk-in / Phone</span></div><span class="donut-legend-right">14</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Admissions Conversion -->
+        <div class="donut-card">
+          <div class="donut-card-top">
+            <div class="donut-card-title"><span style="color:var(--scm-navy);">●</span> Admissions Conversion</div>
+            <span class="badge badge-navy">248 Total Leads</span>
+          </div>
+          <div class="donut-card-body">
+            <div class="donut-chart-wrapper"><canvas id="chartPipelineStages"></canvas></div>
+            <div class="donut-legend-list">
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#051751;"></span><span>New Inquiry</span></div><span class="donut-legend-right">82</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#006AB3;"></span><span>Contacted</span></div><span class="donut-legend-right">54</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#6366F1;"></span><span>Counseling</span></div><span class="donut-legend-right">38</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#F59E0B;"></span><span>Application</span></div><span class="donut-legend-right">24</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#0C4F3E;"></span><span>Enrolled</span></div><span class="donut-legend-right">42</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Course Popularity -->
+        <div class="donut-card">
+          <div class="donut-card-top">
+            <div class="donut-card-title"><span style="color:var(--scm-blue);">●</span> Course Popularity</div>
+            <span class="badge badge-blue">42 Enrollments</span>
+          </div>
+          <div class="donut-card-body">
+            <div class="donut-chart-wrapper"><canvas id="chartCourseAdmissions"></canvas></div>
+            <div class="donut-legend-list">
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#0C4F3E;"></span><span>PG Logistics &amp; SCM</span></div><span class="donut-legend-right">16</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#051751;"></span><span>Prof. Diploma</span></div><span class="donut-legend-right">11</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#006AB3;"></span><span>Warehouse &amp; Inventory</span></div><span class="donut-legend-right">6</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#10B981;"></span><span>Air Freight</span></div><span class="donut-legend-right">4</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#F59E0B;"></span><span>Ocean Freight</span></div><span class="donut-legend-right">3</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Fee Collection Health -->
+        <div class="donut-card">
+          <div class="donut-card-top">
+            <div class="donut-card-title"><span style="color:#10B981;">₹</span> Fee Collection Health</div>
+            <span class="badge badge-success">₹17.2L Total</span>
+          </div>
+          <div class="donut-card-body">
+            <div class="donut-chart-wrapper"><canvas id="chartFeesHealth"></canvas></div>
+            <div class="donut-legend-list">
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#10B981;"></span><span>Collected / Paid</span></div><span class="donut-legend-right">₹12.4L</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#F59E0B;"></span><span>Outstanding Balance</span></div><span class="donut-legend-right">₹4.8L</span></div>
+              <div class="donut-legend-item" style="margin-top:0.5rem;border-top:1px solid var(--border-subtle);padding-top:0.5rem;">
+                <div class="donut-legend-left" style="font-size:0.72rem;color:var(--text-muted);">Health Collection Ratio</div>
+                <span style="color:#10B981;font-weight:800;font-size:0.85rem;">72%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 5. Counselor Workload -->
+        <div class="donut-card">
+          <div class="donut-card-top">
+            <div class="donut-card-title"><span style="color:var(--scm-green);">●</span> Counselor Workload</div>
+            <span class="badge badge-primary">248 Handled</span>
+          </div>
+          <div class="donut-card-body">
+            <div class="donut-chart-wrapper"><canvas id="chartTeamWorkload"></canvas></div>
+            <div class="donut-legend-list">
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#0C4F3E;"></span><span>Anjali Menon</span></div><span class="donut-legend-right">68</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#006AB3;"></span><span>Arun Kumar</span></div><span class="donut-legend-right">58</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#6366F1;"></span><span>Deepa Varma</span></div><span class="donut-legend-right">46</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#F59E0B;"></span><span>Rajesh K.</span></div><span class="donut-legend-right">42</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#10B981;"></span><span>Emmanuel P.</span></div><span class="donut-legend-right">34</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 6. Task Completion -->
+        <div class="donut-card">
+          <div class="donut-card-top">
+            <div class="donut-card-title"><span style="color:#10B981;">✓</span> Task Completion</div>
+            <span class="badge badge-success">94 Daily Tasks</span>
+          </div>
+          <div class="donut-card-body">
+            <div class="donut-chart-wrapper"><canvas id="chartTaskExecution"></canvas></div>
+            <div class="donut-legend-list">
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#10B981;"></span><span>Done (Completed)</span></div><span class="donut-legend-right">82</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#F59E0B;"></span><span>In Progress</span></div><span class="donut-legend-right">10</span></div>
+              <div class="donut-legend-item"><div class="donut-legend-left"><span class="legend-color-dot" style="background:#EF4444;"></span><span>Blocked / Escalated</span></div><span class="donut-legend-right">2</span></div>
+              <div class="donut-legend-item" style="margin-top:0.5rem;border-top:1px solid var(--border-subtle);padding-top:0.5rem;">
+                <div class="donut-legend-left" style="font-size:0.72rem;color:var(--text-muted);">Completion Rate</div>
+                <span style="color:#10B981;font-weight:800;font-size:0.85rem;">87%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       8. FINAL CTA
+       ========================================================================= -->
+  <section class="final-cta-section" id="contact">
+    <div class="container final-cta-container">
+      <h2 class="final-cta-title">Bring Every Lead, Follow-up, and Enrollment Into One Workspace.</h2>
+      <p class="final-cta-desc">
+        Give SCM Hub's B2C team a centralized view of student engagement and operational performance.
+      </p>
+      <div style="display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap;">
+        <a href="login.html" class="btn btn-primary btn-lg" style="background: #10B981; border: none;">
+          <span>Access Operations Portal</span>
+        </a>
+        <a href="#preview" class="btn btn-secondary btn-lg" style="background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.25); color: #fff;">
+          <span>View Dashboard Preview</span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================================
+       9. FOOTER
+       ========================================================================= -->
+  <footer class="app-footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-col">
+          <div class="brand-wrapper" style="margin-bottom: 1rem;">
+            <img src="assets/scm-hub-logo-c.png" alt="SCM Hub Logo" class="brand-logo-img" onerror="this.src='assets/scm-hub-logo.png'" />
+          </div>
+          <p style="font-size: 0.85rem; color: var(--text-secondary); max-width: 320px; margin-bottom: 1rem;">
+            SCM Hub — Leading Logistics &amp; Supply Chain Institute, Infopark Kochi. Powered by SERP Hawk CRM for B2C operations.
+          </p>
+          <div style="font-size: 0.75rem; color: var(--text-muted);">
+            Helpline: +91 97443 50156 • info@scmhub.com
+          </div>
+        </div>
+
+        <div class="footer-col">
+          <h5>Navigation</h5>
+          <ul class="footer-links">
+            <li><a href="#overview">Overview</a></li>
+            <li><a href="#impact">Business Impact</a></li>
+            <li><a href="#workflow">Workflow</a></li>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#preview">Dashboard Preview</a></li>
+            <li><a href="#analytics">Analytics</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h5>Portal Access</h5>
+          <ul class="footer-links">
+            <li><a href="login.html">Counselor Sign In</a></li>
+            <li><a href="login.html">Director Portal</a></li>
+            <li><a href="#preview">Live Operations Cockpit</a></li>
+            <li><a href="logout.html">Sign Out</a></li>
+          </ul>
+        </div>
+
+        <div class="footer-col">
+          <h5>SCM Hub Links</h5>
+          <ul class="footer-links">
+            <li><a href="https://scmhub.com/" target="_blank" rel="noopener">Official Website ↗</a></li>
+            <li><a href="https://scmhub.com/full-time-programs" target="_blank" rel="noopener">Full-Time Programs</a></li>
+            <li><a href="https://scmhub.com/admissions" target="_blank" rel="noopener">Admissions Page</a></li>
+            <li><a href="https://scmhub.com/campus" target="_blank" rel="noopener">Infopark Campus</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="footer-bottom">
+        <div>
+          © 2026 SCM Hub Institute. All rights reserved. Powered by SERP Hawk CRM.
+        </div>
+        <div style="display: flex; gap: 1.5rem;">
+          <a href="#">Privacy Policy</a>
+          <a href="#">Terms of Service</a>
+          <a href="#">Security Protocol</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="js/chart.umd.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/main.js"></script>
+  <script src="js/auth.js"></script>
+</body>
+</html>

@@ -1,0 +1,1075 @@
+"use client";
+
+import { motion, AnimatePresence } from "framer-motion";
+import type { Variants } from "framer-motion";
+import { Users, Send, Briefcase, Target, Activity, Phone, GraduationCap, ArrowUpRight, CheckCircle2, TrendingUp, DollarSign, Timer, AlertTriangle, Sparkles, Loader2, Printer, Plus, ChevronUp, ChevronDown, Bot, X, MapPin, Zap, Mail, Globe, Trophy, Lightbulb, BarChart2, FolderKanban, UserCheck, Calendar, PieChart as PieChartIcon, FileText, IndianRupee, CalendarClock } from "lucide-react";
+import Link from "next/link";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell, RadialBarChart, RadialBar } from "recharts";
+import { cn } from "@/lib/utils";
+
+import { useEffect, useState } from "react";
+import { API_BASE_URL } from "@/config";
+import { useRole } from "@/context/RoleContext";
+import { useLanguage } from "@/context/LanguageContext";
+import { ShieldAlert, LockKeyhole } from "lucide-react";
+import FollowUpsWidget from "@/components/followups/FollowUpsWidget";
+
+// ─── Agent Data Pretty Viewer ──────────────────────────────────────────────────
+function AgentDataViewer({ data, overview }: { data?: string | null; overview?: string | null }) {
+  let parsed: any = null;
+  if (data) {
+    try { parsed = typeof data === "string" ? JSON.parse(data) : data; } catch {}
+  }
+
+  if (!parsed && !overview) {
+    return <p className="text-sm text-[var(--text-secondary)] italic">No agent data available for this lead.</p>;
+  }
+
+  const Section = ({ title, icon, children }: any) => (
+    <div className="mb-4">
+      <h5 className="text-xs font-black uppercase tracking-widest text-indigo-500 flex items-center gap-1.5 mb-2">{icon}{title}</h5>
+      {children}
+    </div>
+  );
+
+  const Tag = ({ label }: { label: string }) => (
+    <span className="inline-block bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 text-[11px] font-semibold px-2 py-0.5 rounded-md mr-1.5 mb-1">{label}</span>
+  );
+
+  return (
+    <div className="bg-white/60 dark:bg-black/20 rounded-xl p-4 space-y-3 text-sm">
+      {/* Overview */}
+      {(overview || parsed?.company_overview) && (
+        <Section title="Company Overview" icon={<Globe className="w-3 h-3" />}>
+          <p className="text-[var(--text-secondary)] leading-relaxed">{overview || parsed.company_overview}</p>
+        </Section>
+      )}
+
+      {/* Industry & Business Model */}
+      {(parsed?.industry || parsed?.business_model) && (
+        <Section title="Business" icon={<Briefcase className="w-3 h-3" />}>
+          {parsed.industry && <p className="text-[var(--text-secondary)]"><span className="font-semibold text-[var(--text-primary)]">Industry:</span> {parsed.industry}</p>}
+          {parsed.business_model && <p className="text-[var(--text-secondary)] mt-1"><span className="font-semibold text-[var(--text-primary)]">Model:</span> {parsed.business_model}</p>}
+          {parsed.company_size_estimate && <p className="text-[var(--text-secondary)] mt-1"><span className="font-semibold text-[var(--text-primary)]">Size:</span> {parsed.company_size_estimate}</p>}
+        </Section>
+      )}
+
+      {/* Key Weaknesses & Opportunities */}
+      {(parsed?.key_weaknesses?.length || parsed?.biggest_opportunities?.length) && (
+        <Section title="Insights" icon={<Lightbulb className="w-3 h-3" />}>
+          {parsed.key_weaknesses?.length > 0 && (
+            <div className="mb-2">
+              <p className="text-[11px] font-bold text-red-500 uppercase mb-1">Weaknesses</p>
+              {parsed.key_weaknesses.map((w: string, i: number) => <p key={i} className="text-[var(--text-secondary)] text-xs flex gap-1.5"><span className="text-red-400 shrink-0">•</span>{w}</p>)}
+            </div>
+          )}
+          {parsed.biggest_opportunities?.length > 0 && (
+            <div>
+              <p className="text-[11px] font-bold text-emerald-500 uppercase mb-1">Opportunities</p>
+              {parsed.biggest_opportunities.map((o: string, i: number) => <p key={i} className="text-[var(--text-secondary)] text-xs flex gap-1.5"><span className="text-emerald-400 shrink-0">•</span>{o}</p>)}
+            </div>
+          )}
+        </Section>
+      )}
+
+      {/* SerpHawk Opportunity */}
+      {parsed?.serphawk_opportunity && (
+        <Section title="SerpHawk Opportunity" icon={<Trophy className="w-3 h-3" />}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-lg font-black text-indigo-600">{parsed.serphawk_opportunity.fit_score}/10</span>
+            <span className="text-xs text-[var(--text-secondary)]">Fit Score</span>
+            {parsed.serphawk_opportunity.estimated_deal_value && (
+              <span className="ml-auto text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-md">{parsed.serphawk_opportunity.estimated_deal_value}</span>
+            )}
+          </div>
+          <p className="text-[var(--text-secondary)] text-xs italic mb-2">{parsed.serphawk_opportunity.pitch_angle}</p>
+          {parsed.serphawk_opportunity.recommended_services?.length > 0 && (
+            <div className="flex flex-wrap">{parsed.serphawk_opportunity.recommended_services.map((s: string, i: number) => <Tag key={i} label={s} />)}</div>
+          )}
+        </Section>
+      )}
+
+      {/* Contacts */}
+      {parsed?.contacts?.length > 0 && parsed.contacts[0]?.phone_number && (
+        <Section title="Contacts" icon={<Phone className="w-3 h-3" />}>
+          {parsed.contacts.filter((c: any) => c.phone_number || c.email).map((c: any, i: number) => (
+            <div key={i} className="text-[var(--text-secondary)] text-xs space-y-0.5">
+              {c.phone_number && <p><span className="font-semibold text-[var(--text-primary)]">Phone:</span> {c.phone_number}</p>}
+              {c.email && <p><span className="font-semibold text-[var(--text-primary)]">Email:</span> {c.email}</p>}
+            </div>
+          ))}
+        </Section>
+      )}
+
+      {/* GTM Quick Wins */}
+      {parsed?.gtm_recommendations?.quick_wins?.length > 0 && (
+        <Section title="Quick Wins" icon={<Zap className="w-3 h-3" />}>
+          {parsed.gtm_recommendations.quick_wins.map((w: string, i: number) => (
+            <p key={i} className="text-[var(--text-secondary)] text-xs flex gap-1.5"><span className="text-amber-400 shrink-0">⚡</span>{w}</p>
+          ))}
+        </Section>
+      )}
+
+      {/* Draft email */}
+      {parsed?.draft?.english_body && (
+        <Section title="Suggested Email Draft" icon={<Mail className="w-3 h-3" />}>
+          <div className="bg-slate-50 dark:bg-zinc-800/50 rounded-lg p-3 text-xs text-[var(--text-secondary)] whitespace-pre-line">
+            <p className="font-bold text-[var(--text-primary)] mb-1">Subject: {parsed.draft.subject}</p>
+            {parsed.draft.english_body}
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+// Data comes from adminStats from the backend
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 20 },
+  show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 100 } }
+};
+
+
+// ─── Reusable Management Donut Card ──────────────────────────────────────────
+function ManagementDonutCard({
+  title,
+  subtitle,
+  icon: Icon,
+  iconColor,
+  data,
+  colors,
+  totalLabel,
+  valueFormatter,
+  emptyMessage,
+  href,
+}: {
+  title: string;
+  subtitle: string;
+  icon: any;
+  iconColor: string;
+  data: { name: string; value: number }[];
+  colors: string[];
+  totalLabel?: string;
+  valueFormatter?: (v: number) => string;
+  emptyMessage?: string;
+  href?: string;
+}) {
+  const total = data?.reduce((acc, curr) => acc + (curr.value || 0), 0) || 0;
+  const hasData = data && data.length > 0 && total > 0;
+
+  const cardContent = (
+    <div className={cn(
+      "bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-sm overflow-hidden flex flex-col h-[350px] transition-all",
+      href ? "hover:border-indigo-400 hover:shadow-md cursor-pointer group" : "hover:border-indigo-400/40"
+    )}>
+      <div className="p-4 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
+        <h3 className={cn(
+          "font-bold text-sm text-[var(--text-primary)] flex items-center gap-2",
+          href && "group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors"
+        )}>
+          <Icon className={`w-4 h-4 ${iconColor}`} /> {title}
+        </h3>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md">
+            {subtitle}
+          </span>
+          {href && (
+            <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+          )}
+        </div>
+      </div>
+
+      <div className="p-4 flex-1 w-full h-full min-h-0 flex items-center">
+        {hasData ? (
+          <div className="flex w-full h-full items-center gap-3">
+            {/* Donut Chart */}
+            <div className="w-[52%] h-full relative flex items-center justify-center">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="55%"
+                    outerRadius="82%"
+                    paddingAngle={3}
+                  >
+                    {data.map((_, index) => (
+                      <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "var(--surface)",
+                      borderColor: "var(--border)",
+                      borderRadius: "12px",
+                      color: "var(--text-primary)",
+                      fontSize: "12px",
+                      fontWeight: "bold",
+                    }}
+                    formatter={(val: any) => [valueFormatter ? valueFormatter(Number(val)) : val, ""]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              {totalLabel && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-secondary)] opacity-70">
+                    {totalLabel}
+                  </span>
+                  <span className="text-base font-black text-[var(--text-primary)] leading-tight">
+                    {valueFormatter ? valueFormatter(total) : total}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Legend List */}
+            <div className="flex-1 flex flex-col gap-1.5 overflow-y-auto max-h-[250px] pr-1">
+              {data.map((item, index) => {
+                const pct = total > 0 ? Math.round((item.value / total) * 100) : 0;
+                return (
+                  <div key={index} className="flex items-center gap-2 text-xs py-0.5">
+                    <div
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: colors[index % colors.length] }}
+                    />
+                    <span className="text-[11px] font-semibold text-[var(--text-primary)] flex-1 truncate" title={item.name}>
+                      {item.name}
+                    </span>
+                    <span className="text-[11px] font-bold text-[var(--text-secondary)] shrink-0">
+                      {valueFormatter ? valueFormatter(item.value) : item.value}
+                      <span className="text-[10px] opacity-70 ml-1">({pct}%)</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
+            <AlertTriangle className="w-8 h-8 mb-2 opacity-40 text-amber-500" />
+            <p className="text-xs font-semibold">{emptyMessage || "No data recorded yet"}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  if (href) {
+    return (
+      <Link href={href} className="block no-underline">
+        {cardContent}
+      </Link>
+    );
+  }
+
+  return cardContent;
+}
+
+
+export function AdminDashboard({ adminStats, NAV_CARDS, language, isDemo }: any) {
+  const { role, user } = useRole();
+  const { t } = useLanguage();
+  const [users, setUsers] = useState<any[]>([]);
+  const [myClients, setMyClients] = useState<any[]>([]);
+  const [myLeads, setMyLeads] = useState<any[]>([]);
+  const [upgradeRequested, setUpgradeRequested] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
+
+  const handleUpgrade = async () => {
+    setUpgrading(true);
+    try {
+      const email = user?.email || "";
+      const res = await fetch(`${API_BASE_URL}/demo/request-upgrade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      if (res.ok) setUpgradeRequested(true);
+    } catch (e) {}
+    setUpgrading(false);
+  };
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/users`).then(r => r.json()).then(d => setUsers(d.users || []));
+    if (role === 'SalesManager' || role === 'Employee' || role === 'Admin' || role === 'Demo') {
+      fetch(`${API_BASE_URL}/clients`).then(r => r.json()).then(d => {
+        const list = d.clients || [];
+        setMyClients(list);
+      });
+      fetch(`${API_BASE_URL}/leads`).then(r => r.json()).then(d => {
+        setMyLeads(d.leads || []);
+      });
+    }
+  }, [role]);
+
+  const salesTeam = users.filter(u => ['Admin', 'SalesManager', 'Employee'].includes(u.role));
+  const devTeam = users.filter(u => ['ProjectMember', 'Intern'].includes(u.role));
+  const isSales = role === 'SalesManager' || role === 'Employee' || role === 'Admin' || role === 'Demo';
+
+  return (
+    <div className="space-y-6 max-w-[1600px] mx-auto w-full">
+      {/* DEMO BANNER */}
+      {isDemo && (
+        <motion.div variants={itemVariants} className="bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-rose-500/20 border border-amber-500/30 rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-500/20 rounded-lg">
+              <ShieldAlert className="w-6 h-6 text-amber-600 dark:text-amber-500" />
+            </div>
+            <div>
+              <h3 className="font-bold text-amber-800 dark:text-amber-500 text-sm tracking-wide uppercase">{t("admin_dashboard.demo_banner_title")}</h3>
+              <p className="text-sm font-medium text-amber-700/80 dark:text-amber-500/80">{t("admin_dashboard.demo_banner_desc")}</p>
+            </div>
+          </div>
+          {!upgradeRequested ? (
+            <button
+              onClick={handleUpgrade}
+              disabled={upgrading}
+              className="shrink-0 px-6 py-2.5 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white font-bold rounded-xl shadow-lg transition-all text-sm flex items-center gap-2"
+            >
+              {upgrading ? t("admin_dashboard.sending") : t("admin_dashboard.request_full_access")}
+              {!upgrading && <LockKeyhole className="w-4 h-4" />}
+            </button>
+          ) : (
+            <div className="shrink-0 px-6 py-2.5 bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 font-bold rounded-xl text-sm">
+              ✓ {t("admin_dashboard.upgrade_sent")}
+            </div>
+          )}
+        </motion.div>
+      )}
+
+      {/* HEADER SECTION */}
+      <motion.div variants={itemVariants} className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2">
+        <div>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">{t("admin_dashboard.title")}</h1>
+          <p className="text-sm font-medium text-[var(--text-secondary)] mt-1">
+            {t("admin_dashboard.subtitle")}
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <Link href="/clients" className="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl shadow-sm text-sm font-bold hover:from-blue-700 hover:to-indigo-700 transition-all flex items-center gap-2">
+            <Plus className="w-4 h-4" /> {t("admin_dashboard.add_new_client")}
+          </Link>
+        </div>
+      </motion.div>
+
+      {/* KPI METRICS ROW */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {[
+          {
+            title: "Total Revenue (Collected & Advances)",
+            value: `₹${(adminStats?.revenue || adminStats?.companyManagement?.totalCollectedFees || 0).toLocaleString("en-IN")}`,
+            trend: "From student fees & advances",
+            icon: IndianRupee,
+            color: "text-emerald-500",
+            bg: "bg-emerald-50 dark:bg-emerald-500/10",
+          },
+          {
+            title: "Active Students",
+            value: (adminStats?.totalStudents ?? adminStats?.total ?? 0),
+            trend: "Enrolled student body",
+            icon: Users,
+            color: "text-blue-500",
+            bg: "bg-blue-50 dark:bg-blue-500/10",
+          },
+          {
+            title: "Total Course Fees Booked",
+            value: `₹${(adminStats?.totalFeeBooked || adminStats?.companyManagement?.totalFeeBooked || adminStats?.pipelineValue || 0).toLocaleString("en-IN")}`,
+            trend: "Contracted enrollment value",
+            icon: Target,
+            color: "text-indigo-500",
+            bg: "bg-indigo-50 dark:bg-indigo-500/10",
+          },
+          {
+            title: "Pending Operations Tasks",
+            value: adminStats?.pending || 0,
+            trend: "Staff actions required",
+            icon: Timer,
+            color: "text-amber-500",
+            bg: "bg-amber-50 dark:bg-amber-500/10",
+          },
+        ].map((kpi, idx) => (
+          <motion.div key={idx} variants={itemVariants} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl p-5 shadow-sm flex items-center gap-4">
+            <div className={`p-3 rounded-xl ${kpi.bg}`}>
+              <kpi.icon className={`w-6 h-6 ${kpi.color}`} />
+            </div>
+            <div>
+              <p className="text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider mb-1">{kpi.title}</p>
+              <h3 className="text-2xl font-bold text-slate-900 dark:text-white leading-none">{kpi.value}</h3>
+              <p className="text-[11px] font-medium text-slate-400 dark:text-zinc-500 mt-2">{kpi.trend}</p>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* FOLLOW-UPS: pending / overdue / due today / completed */}
+      <motion.div variants={itemVariants}>
+        <FollowUpsWidget />
+      </motion.div>
+
+      {/* CALL PITCH WIDGET */}
+      <CallPitchWidget />
+
+
+      {/* FINANCIAL & ADMISSIONS FUNNEL CHARTS */}
+      <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* REVENUE CHART */}
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
+          <div className="p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
+            <h3 className="font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-emerald-500"/> Financial Overview (INR ₹)
+            </h3>
+            <span className="text-xs font-semibold px-2.5 py-1 bg-emerald-500/10 text-emerald-600 rounded-md">Last 6 Months</span>
+          </div>
+          <div className="p-5 flex-1 w-full h-full min-h-0">
+            {adminStats?.revenueData?.length && adminStats.revenueData.some((d: any) => d.revenue || d.expenses) ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={adminStats.revenueData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--text-secondary)' }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--text-secondary)' }} tickFormatter={(val) => `₹${val >= 1000 ? (val/1000).toFixed(0) + 'k' : val}`} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 'bold' }} 
+                    itemStyle={{ color: 'var(--text-primary)' }}
+                    formatter={(value: any) => [`₹${Number(value || 0).toLocaleString("en-IN")}`, '']}
+                  />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
+                  <Area type="monotone" dataKey="revenue" name="Fee Revenue" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
+                  <Area type="monotone" dataKey="expenses" name="Operational Outflow" stroke="#ef4444" strokeWidth={3} fillOpacity={1} fill="url(#colorExp)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
+                <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
+                <p className="text-sm font-medium">No fee financial records yet</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ADMISSIONS & LEAD FUNNEL CHART */}
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden flex flex-col h-[400px]">
+          <div className="p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
+            <h3 className="font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <Target className="w-5 h-5 text-indigo-500"/> Lead &amp; Admissions Funnel
+            </h3>
+            <span className="text-xs font-semibold px-2.5 py-1 bg-indigo-500/10 text-indigo-600 rounded-md">Live Funnel</span>
+          </div>
+          <div className="p-5 flex-1 w-full h-full min-h-0">
+            {(adminStats?.leadStagePie?.length || adminStats?.pipelineData?.length) ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={adminStats?.leadStagePie?.length ? adminStats.leadStagePie.map((d: any) => ({ stage: d.name, count: d.value })) : adminStats?.pipelineData} layout="vertical" margin={{ top: 0, right: 20, left: 20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="var(--border)" />
+                  <XAxis type="number" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--text-secondary)' }} />
+                  <YAxis dataKey="stage" type="category" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: 'var(--text-primary)', fontWeight: 600 }} width={110} />
+                  <Tooltip 
+                    cursor={{ fill: 'var(--sidebar-hover)' }}
+                    contentStyle={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 'bold' }} 
+                  />
+                  <Bar dataKey="count" name="Leads" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={22} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
+                <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
+                <p className="text-sm font-medium">No lead stages recorded yet</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* EXECUTIVE MANAGEMENT COMMAND CENTER & OPERATIONS PULSE                    */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      <motion.div variants={itemVariants} className="space-y-4">
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 dark:from-zinc-950 dark:via-indigo-950/40 dark:to-zinc-950 border border-indigo-500/30 rounded-2xl p-5 shadow-lg text-white">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+                  Company Command Center
+                </span>
+                <span className="text-xs text-indigo-200/70 font-semibold">• Live Management Hub</span>
+              </div>
+              <h2 className="text-xl font-black mt-1">Direct Operations &amp; Company Controls</h2>
+              <p className="text-xs text-indigo-200/80 mt-0.5">
+                Manage all company activities, assign leads, monitor staff task sheets, and audit enrollments directly from this dashboard.
+              </p>
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href="/leads"
+                className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+              >
+                <Users size={14} /> Assign Leads
+              </Link>
+              <Link
+                href="/task-sheet"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10"
+              >
+                <FileText size={14} /> Staff Task Sheet
+              </Link>
+              <Link
+                href="/enrollments"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10"
+              >
+                <GraduationCap size={14} /> Fees &amp; Slips
+              </Link>
+              <Link
+                href="/schedule"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10"
+              >
+                <CalendarClock size={14} /> Important Dates
+              </Link>
+              <Link
+                href="/reports"
+                className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-white/10"
+              >
+                <BarChart2 size={14} /> Full Analytics
+              </Link>
+            </div>
+          </div>
+
+          {/* Operational Pulse Badges */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-white/10 text-xs">
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span className="text-indigo-200">Unassigned Leads:</span>
+              <strong className="font-black text-amber-300">
+                {adminStats?.companyManagement?.unassignedLeads ?? 0}
+              </strong>
+            </div>
+            <Link href="/schedule" className="flex items-center gap-2 hover:opacity-85 transition-opacity">
+              <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+              <span className="text-indigo-200">Scheduled Dates:</span>
+              <strong className="font-black text-blue-300">
+                {adminStats?.companyManagement?.pendingScheduledCount ?? adminStats?.companyManagement?.pendingDemos ?? 0}
+              </strong>
+            </Link>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="text-indigo-200">Tasks Logged Today:</span>
+              <strong className="font-black text-emerald-300">
+                {adminStats?.companyManagement?.todayTasksCount ?? 0}
+              </strong>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-rose-400" />
+              <span className="text-indigo-200">Outstanding Fees:</span>
+              <strong className="font-black text-rose-300">
+                ₹{(adminStats?.companyManagement?.totalOutstandingFees ?? 0).toLocaleString("en-IN")}
+              </strong>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* COMPREHENSIVE COMPANY VISUALIZATION SUITE: 6 PIE & DONUT CHARTS           */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      <motion.div variants={itemVariants} className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-lg font-black text-[var(--text-primary)] flex items-center gap-2">
+              <PieChartIcon className="w-5 h-5 text-indigo-500" />
+              Company Operations &amp; Intelligence Visualizations
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Complete panoramic management breakdown across Leads, Admissions, Acquisition Sources, Revenue, and Staff Performance.
+            </p>
+          </div>
+          <span className="text-xs font-semibold px-2.5 py-1 bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-md shrink-0">
+            6 Live Visualizations
+          </span>
+        </div>
+
+        {/* 6 Comprehensive Pie / Donut Charts Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {/* 1. Lead Pipeline Stages */}
+          <ManagementDonutCard
+            title="Lead Pipeline Stages"
+            subtitle="Funnel Breakdown"
+            icon={Target}
+            iconColor="text-indigo-500"
+            href="/leads"
+            data={
+              adminStats?.leadStagePie?.length
+                ? adminStats.leadStagePie
+                : adminStats?.pipelineData?.map((p: any) => ({ name: p.stage, value: p.count })) || [
+                    { name: "New", value: 12 },
+                    { name: "Contacted", value: 8 },
+                    { name: "Webinar Scheduled", value: 5 },
+                    { name: "Converted", value: 4 },
+                  ]
+            }
+            colors={["#6366f1", "#3b82f6", "#06b6d4", "#10b981", "#f59e0b", "#ef4444"]}
+            totalLabel="Total Leads"
+          />
+
+          {/* 2. Acquisition Channels */}
+          <ManagementDonutCard
+            title="Lead Acquisition Sources"
+            subtitle="Channel Share"
+            icon={Globe}
+            iconColor="text-pink-500"
+            href="/lead-sources"
+            data={
+              adminStats?.leadSourcePie?.length
+                ? adminStats.leadSourcePie
+                : [
+                    { name: "Website Direct", value: 14 },
+                    { name: "Social Media / Ads", value: 9 },
+                    { name: "Walk-in", value: 6 },
+                    { name: "Student Referral", value: 5 },
+                    { name: "Google Search", value: 4 },
+                  ]
+            }
+            colors={["#ec4899", "#8b5cf6", "#3b82f6", "#10b981", "#f97316", "#eab308"]}
+            totalLabel="Inquiries"
+          />
+
+          {/* 3. Course Admissions & Interests */}
+          <ManagementDonutCard
+            title="Course Admissions Share"
+            subtitle="Program Popularity"
+            icon={GraduationCap}
+            iconColor="text-cyan-500"
+            href="/courses"
+            data={
+              adminStats?.coursePie?.length
+                ? adminStats.coursePie
+                : [
+                    { name: "Full Stack Development", value: 16 },
+                    { name: "Data Science & AI", value: 12 },
+                    { name: "Digital Marketing", value: 8 },
+                    { name: "UI/UX Design", value: 6 },
+                    { name: "Cloud & DevOps", value: 4 },
+                  ]
+            }
+            colors={["#06b6d4", "#3b82f6", "#6366f1", "#a855f7", "#ec4899", "#10b981"]}
+            totalLabel="Admissions"
+          />
+
+          {/* 4. Financial Health & Fees Collection */}
+          <ManagementDonutCard
+            title="Fees Collection Health"
+            subtitle="Collected vs Due"
+            icon={IndianRupee}
+            iconColor="text-emerald-500"
+            href="/enrollments"
+            data={
+              adminStats?.revenueHealthPie?.length
+                ? adminStats.revenueHealthPie
+                : [
+                    { name: "Collected / Paid", value: adminStats?.revenue || 45000 },
+                    { name: "Outstanding / Due", value: 18000 },
+                  ]
+            }
+            colors={["#10b981", "#f59e0b", "#ef4444"]}
+            totalLabel="Total Value"
+            valueFormatter={(v) => `₹${v.toLocaleString("en-IN")}`}
+          />
+
+          {/* 5. Sales Team Workload */}
+          <ManagementDonutCard
+            title="Sales Team Workload"
+            subtitle="Lead Distribution"
+            icon={UserCheck}
+            iconColor="text-blue-500"
+            href="/teams"
+            data={
+              adminStats?.salesWorkload?.length
+                ? adminStats.salesWorkload.map((s: any) => ({ name: s.name, value: s.leads || 1 }))
+                : [
+                    { name: "Lead Sales Rep", value: 15 },
+                    { name: "Counselor 1", value: 10 },
+                    { name: "Counselor 2", value: 8 },
+                  ]
+            }
+            colors={["#6366f1", "#3b82f6", "#14b8a6", "#f59e0b", "#ec4899", "#8b5cf6"]}
+            totalLabel="Leads Handled"
+          />
+
+          {/* 6. Daily Task Sheet Execution Health */}
+          <ManagementDonutCard
+            title="Task Sheet Execution"
+            subtitle="Daily Staff Delivery"
+            icon={CheckCircle2}
+            iconColor="text-amber-500"
+            href="/task-sheet"
+            data={
+              adminStats?.taskHealthPie?.length
+                ? adminStats.taskHealthPie
+                : [
+                    { name: "Done (Completed)", value: 18 },
+                    { name: "In Progress / Pending", value: 7 },
+                    { name: "Blocked / Needs Help", value: 2 },
+                  ]
+            }
+            colors={["#10b981", "#f59e0b", "#ef4444"]}
+            totalLabel="Tasks"
+          />
+        </div>
+      </motion.div>
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* LEAD SOURCES WIN RATE & CONVERSION EFFICIENCY GRAPH                     */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      <motion.div variants={itemVariants} className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-base font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-pink-500" />
+              Lead Win Rate Percentage by Acquisition Source
+            </h2>
+            <p className="text-xs text-[var(--text-secondary)]">
+              Real-time conversion efficiency per lead channel — measuring student enrollments against total inquiries.
+            </p>
+          </div>
+          <Link
+            href="/lead-sources"
+            className="text-xs font-semibold px-2.5 py-1 bg-pink-500/10 text-pink-600 hover:bg-pink-500/20 rounded-md transition-colors flex items-center gap-1 shrink-0 self-start sm:self-auto"
+          >
+            Explore Lead Sources <ArrowUpRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+
+        {/* Win Rate Bar Chart Card */}
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden flex flex-col h-[320px]">
+          <div className="p-4 sm:p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
+            <h3 className="font-bold text-[var(--text-primary)] text-sm flex items-center gap-2">
+              <PieChartIcon className="w-4 h-4 text-pink-500" /> Win Rate % (Enrollments / Total Inquiries)
+            </h3>
+            <span className="text-xs font-semibold px-2 py-0.5 bg-pink-500/10 text-pink-600 rounded-md">
+              Channel Benchmark
+            </span>
+          </div>
+          <div className="p-4 flex-1 w-full h-full min-h-0">
+            {adminStats?.leadSourceWinRate?.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={adminStats.leadSourceWinRate} margin={{ top: 10, right: 15, left: -15, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis
+                    dataKey="source"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: "var(--text-secondary)", fontWeight: 600 }}
+                  />
+                  <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fontSize: 11, fill: "var(--text-secondary)" }}
+                    domain={[0, 100]}
+                    unit="%"
+                  />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0].payload;
+                      return (
+                        <div style={{ backgroundColor: "var(--surface)", borderColor: "var(--border)" }} className="border rounded-lg p-2.5 shadow-lg text-xs">
+                          <p className="font-bold text-[var(--text-primary)]">{d.source}</p>
+                          <p className="text-pink-500 font-bold mt-1">Win Rate: {d.win_rate}%</p>
+                          <p className="text-[var(--text-secondary)]">Total Inquiries: {d.total}</p>
+                          <p className="text-[var(--text-secondary)]">Enrolled Admissions: {d.converted}</p>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Bar dataKey="win_rate" name="Win Rate %" radius={[6, 6, 0, 0]} maxBarSize={42}>
+                    {adminStats.leadSourceWinRate.map((_: any, index: number) => {
+                      const COLORS = ["#ec4899", "#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#06b6d4", "#f97316"];
+                      return <Cell key={`cell-winrate-${index}`} fill={COLORS[index % COLORS.length]} />;
+                    })}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
+                <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
+                <p className="text-sm font-medium">No lead source win rate data available</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+
+      {/* TEAM ENGAGEMENT & ACTIVITY */}
+      <motion.div variants={itemVariants} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* ENGAGEMENT CHART (Takes 2 columns) */}
+        <div className="lg:col-span-2 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm overflow-hidden flex flex-col h-[350px]">
+          <div className="p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30">
+            <h3 className="font-bold text-[var(--text-primary)] flex items-center gap-2">
+              <Activity className="w-5 h-5 text-blue-500"/> {t("admin_dashboard.team_engagement")}
+            </h3>
+            <span className="text-xs font-semibold px-2.5 py-1 bg-blue-500/10 text-blue-600 rounded-md">{t("admin_dashboard.last_7_days")}</span>
+          </div>
+          <div className="p-5 flex-1 w-full h-full min-h-0">
+            {adminStats?.chartLabels?.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={adminStats.chartLabels.map((label: string, i: number) => ({
+                  name: label,
+                  activities: adminStats.activityChart?.[i] || 0,
+                  emails: adminStats.emailChart?.[i] || 0,
+                  calls: adminStats.callChart?.[i] || 0
+                }))} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorAct" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--text-secondary)' }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--text-secondary)' }} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: 'var(--surface)', borderColor: 'var(--border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '12px', fontWeight: 'bold' }} 
+                  />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+                  <Area type="monotone" dataKey="activities" name={t("admin_dashboard.total_activities")} stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorAct)" />
+                  <Area type="step" dataKey="emails" name={t("admin_dashboard.emails_sent")} stroke="#f59e0b" strokeWidth={2} fill="transparent" strokeDasharray="4 4" />
+                  <Area type="step" dataKey="calls" name={t("admin_dashboard.calls_made")} stroke="#8b5cf6" strokeWidth={2} fill="transparent" />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center text-[var(--text-secondary)]">
+                <AlertTriangle className="w-8 h-8 mb-2 opacity-50" />
+                <p className="text-sm font-medium">{t("admin_dashboard.no_activity_data")}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* RECENT ACTIVITY LIST (Takes 1 column) */}
+        <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm flex flex-col h-[350px] overflow-hidden">
+          <div className="p-5 border-b border-[var(--border)] flex justify-between items-center bg-[var(--sidebar-hover)]/30 shrink-0">
+            <h3 className="font-bold text-[var(--text-primary)]">{t("admin_dashboard.recent_activity")}</h3>
+            <Link href="/email-agent" className="text-xs font-semibold text-[var(--primary)] hover:underline">{t("admin_dashboard.view_all")}</Link>
+          </div>
+          <div className="overflow-y-auto flex-1">
+            {(adminStats?.recentActivities?.length ?? 0) === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-[var(--text-secondary)] opacity-60 p-8 text-center">
+                <Timer className="w-8 h-8 mb-2" />
+                <p className="text-sm">{t("admin_dashboard.no_activities")}</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-[var(--border)]">
+                {adminStats.recentActivities.slice(0, 10).map((act: any) => (
+                  <div key={act.id} className="p-4 flex gap-4 hover:bg-[var(--sidebar-hover)] transition-colors">
+                    <div className="w-8 h-8 rounded-full bg-[var(--primary)]/10 text-[var(--primary)] flex items-center justify-center shrink-0 mt-0.5">
+                      <Activity className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-[var(--text-primary)] leading-tight">{act.action}</p>
+                      <p className="text-xs text-[var(--text-secondary)] mt-1 line-clamp-2 leading-relaxed">{act.content}</p>
+                      <p className="text-[10px] text-[var(--text-secondary)]/60 mt-1.5 font-semibold uppercase tracking-wider">{act.createdAt ? new Date(act.createdAt).toLocaleString() : ""}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function CallPitchWidget() {
+  const { user } = useRole();
+  const [pitchData, setPitchData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [markingDone, setMarkingDone] = useState(false);
+  const { t } = useLanguage();
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [isAgentDataExpanded, setIsAgentDataExpanded] = useState(false);
+
+  const fetchPitch = async () => {
+    setLoading(true);
+    try {
+      const headers: Record<string, string> = {};
+      if (user?.id) headers["X-User-ID"] = String(user.id);
+      const res = await fetch(`${API_BASE_URL}/dashboard-call-pitch`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setPitchData(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch call pitch", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPitch();
+  }, [user?.id]);
+
+  const handleDoneClick = () => {
+    setIsFeedbackOpen(true);
+  };
+
+  const handleSubmitFeedback = async () => {
+    if (!pitchData?.client?.id || !feedbackText.trim()) return;
+    setMarkingDone(true);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (user?.id) headers["X-User-ID"] = String(user.id);
+      await fetch(`${API_BASE_URL}/dashboard-call-pitch/${pitchData.client.id}/done`, { 
+        method: "POST",
+        headers,
+        body: JSON.stringify({ feedback: feedbackText })
+      });
+      setIsFeedbackOpen(false);
+      setFeedbackText("");
+      await fetchPitch();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setMarkingDone(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-sm p-6 mb-6 flex items-center justify-center h-40">
+        <Loader2 className="animate-spin text-[var(--primary)] w-6 h-6" />
+      </div>
+    );
+  }
+
+  if (!pitchData?.client) {
+    return null;
+  }
+
+  return (
+    <div className="bg-gradient-to-br from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-xl shadow-sm p-6 relative overflow-hidden">
+      <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/20 blur-[80px] rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none" />
+      
+      <div className="relative z-10 flex flex-col md:flex-row gap-6 items-start md:items-center">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="px-2.5 py-1 bg-indigo-500/20 text-indigo-500 dark:text-indigo-400 text-[10px] uppercase tracking-wider font-bold rounded-md flex items-center gap-1.5">
+              <Sparkles className="w-3 h-3" /> {t("admin_dashboard.ai_call_pitch")}
+            </span>
+            <h3 className="font-bold text-lg text-[var(--text-primary)]">
+              {pitchData.client.companyName || pitchData.client.name || t("admin_dashboard.unknown_client")}
+            </h3>
+          </div>
+          
+          <p className="text-[var(--text-secondary)] text-sm leading-relaxed mb-4 italic font-medium">
+            "{pitchData.pitch_text}"
+          </p>
+          
+          <div className="flex gap-4 text-xs font-semibold text-[var(--text-secondary)]">
+            <span className="bg-[var(--surface)] px-2 py-1 rounded-md border border-[var(--border)]">
+              {t("admin_dashboard.industry")} {pitchData.client.industry || t("admin_dashboard.na")}
+            </span>
+            <span className="bg-[var(--surface)] px-2 py-1 rounded-md border border-[var(--border)]">
+              {t("admin_dashboard.phone")} {pitchData.client.phone || t("admin_dashboard.na")}
+            </span>
+          </div>
+          <button 
+            onClick={() => setIsAgentDataExpanded(!isAgentDataExpanded)}
+            className="flex items-center gap-1.5 text-xs font-semibold text-indigo-500 hover:text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            {isAgentDataExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            {isAgentDataExpanded ? "Hide Agent Data" : "Expand Agent Data"}
+          </button>
+        </div>
+        
+        <button 
+          onClick={handleDoneClick}
+          disabled={markingDone}
+          className="shrink-0 flex items-center gap-2 bg-indigo-500 hover:bg-indigo-600 text-white px-5 py-3 rounded-lg font-bold shadow-md transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0"
+        >
+          {markingDone ? <Loader2 className="w-5 h-5 animate-spin" /> : <Phone className="w-5 h-5" />}
+          I made this call
+        </button>
+      </div>
+
+      <AnimatePresence>
+        {isAgentDataExpanded && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }} 
+            animate={{ height: 'auto', opacity: 1 }} 
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden mt-6"
+          >
+            <div className="pt-4 border-t border-indigo-500/10">
+              <h4 className="text-sm font-bold text-[var(--text-primary)] mb-3 flex items-center gap-2">
+                <Bot className="w-4 h-4 text-indigo-500" />
+                Related Agent Data
+              </h4>
+              <AgentDataViewer data={pitchData.agent_data} overview={pitchData.deep_research} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isFeedbackOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-5 border-b border-[var(--border)] flex justify-between items-center">
+                <h3 className="font-bold text-lg text-[var(--text-primary)]">Call Outcome Feedback</h3>
+                <button onClick={() => setIsFeedbackOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-5">
+                <p className="text-sm text-[var(--text-secondary)] mb-4">
+                  Please provide a brief summary of how the call went before marking it as done. This helps us refine future pitches!
+                </p>
+                <textarea
+                  value={feedbackText}
+                  onChange={e => setFeedbackText(e.target.value)}
+                  placeholder="e.g., Left voicemail, interested but needs time..."
+                  className="w-full h-32 p-3 bg-slate-50 dark:bg-zinc-800/50 border border-slate-200 dark:border-zinc-700 rounded-xl text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-indigo-500/50 resize-none"
+                />
+              </div>
+              <div className="p-4 border-t border-[var(--border)] bg-slate-50 dark:bg-zinc-800/20 flex justify-end gap-3">
+                <button 
+                  onClick={() => setIsFeedbackOpen(false)}
+                  className="px-4 py-2 font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-zinc-700 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleSubmitFeedback}
+                  disabled={markingDone || !feedbackText.trim()}
+                  className="px-4 py-2 bg-indigo-500 hover:bg-indigo-600 text-white font-semibold rounded-lg shadow-sm disabled:opacity-50 transition-colors flex items-center gap-2"
+                >
+                  {markingDone ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  Submit & Mark Done
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
