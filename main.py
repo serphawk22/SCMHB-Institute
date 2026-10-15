@@ -8715,6 +8715,80 @@ def _task_dict(t: Task, session: Session) -> dict:
     }
 
 
+def _task_dicts(tasks: list[Task], session: Session) -> list[dict]:
+    if not tasks:
+        return []
+    user_ids = set()
+    client_ids = set()
+    student_ids = set()
+    batch_ids = set()
+    for t in tasks:
+        if t.assigned_to:
+            user_ids.add(t.assigned_to)
+        if t.created_by:
+            user_ids.add(t.created_by)
+        if t.client_id:
+            client_ids.add(t.client_id)
+        if t.student_id:
+            student_ids.add(t.student_id)
+        if t.batch_id:
+            batch_ids.add(t.batch_id)
+
+    users = {}
+    if user_ids:
+        users = {u.id: u for u in session.exec(select(User).where(User.id.in_(user_ids))).all()}
+    clients = {}
+    if client_ids:
+        clients = {c.id: c for c in session.exec(select(ClientProfile).where(ClientProfile.id.in_(client_ids))).all()}
+    client_user_ids = {c.userId for c in clients.values() if c.userId}
+    if client_user_ids:
+        for u in session.exec(select(User).where(User.id.in_(client_user_ids))).all():
+            users.setdefault(u.id, u)
+    students = {}
+    if student_ids:
+        students = {s.id: s for s in session.exec(select(Student).where(Student.id.in_(student_ids))).all()}
+    batches = {}
+    if batch_ids:
+        batches = {b.id: b for b in session.exec(select(Batch).where(Batch.id.in_(batch_ids))).all()}
+
+    out = []
+    for t in tasks:
+        assignee = users.get(t.assigned_to) if t.assigned_to else None
+        creator = users.get(t.created_by) if t.created_by else None
+        client = clients.get(t.client_id) if t.client_id else None
+        client_user = users.get(client.userId) if client and client.userId else None
+        student = students.get(t.student_id) if t.student_id else None
+        batch = batches.get(t.batch_id) if t.batch_id else None
+        out.append({
+            "id": t.id,
+            "title": t.title,
+            "description": t.description,
+            "status": t.status,
+            "priority": t.priority,
+            "due_date": t.due_date,
+            "client_id": t.client_id,
+            "lead_id": t.lead_id,
+            "student_id": t.student_id,
+            "student_name": student.name if student else None,
+            "batch_id": t.batch_id,
+            "batch_name": batch.batch_name if batch else None,
+            "client_name": client_user.name if client_user else (client.companyName if client else None),
+            "project_id": t.project_id,
+            "assigned_to": t.assigned_to,
+            "assignee_name": assignee.name if assignee else None,
+            "created_by": t.created_by,
+            "creator_name": creator.name if creator else None,
+            "submission_url": getattr(t, "submission_url", None),
+            "submission_file": getattr(t, "submission_file", None),
+            "submission_notes": getattr(t, "submission_notes", None),
+            "submitted_at": t.submitted_at.isoformat() if getattr(t, "submitted_at", None) else None,
+            "is_submitted": bool(getattr(t, "submission_url", None) or getattr(t, "submission_file", None) or t.status == "Done"),
+            "created_at": t.created_at.isoformat(),
+            "updated_at": t.updated_at.isoformat(),
+        })
+    return out
+
+
 @app.get("/tasks")
 def list_tasks(
     status: Optional[str] = None,
@@ -8746,7 +8820,7 @@ def list_tasks(
     if project_id:
         q = q.where(Task.project_id == project_id)
     tasks = session.exec(q).all()
-    return {"tasks": [_task_dict(t, session) for t in tasks]}
+    return {"tasks": _task_dicts(tasks, session)}
 
 
 @app.post("/tasks")
@@ -20138,9 +20212,17 @@ def get_batch(batch_id: int, session: Session = Depends(get_session)):
     course = session.get(Course, batch.course_id)
     instructor = session.get(Instructor, batch.instructor_id) if batch.instructor_id else None
     enrollments = session.exec(select(Enrollment).where(Enrollment.batch_id == batch_id, Enrollment.status == "Active")).all()
+    batch_tasks = session.exec(select(Task).where(Task.batch_id == batch_id)).all()
+
+    student_ids = {e.student_id for e in enrollments if e.student_id}
+    student_ids.update(t.student_id for t in batch_tasks if t.student_id)
+    student_by_id = {}
+    if student_ids:
+        student_by_id = {s.id: s for s in session.exec(select(Student).where(Student.id.in_(student_ids))).all()}
+
     students_list = []
     for e in enrollments:
-        student = session.get(Student, e.student_id)
+        student = student_by_id.get(e.student_id)
         if student:
             students_list.append({
                 "id": student.id,
@@ -20157,10 +20239,8 @@ def get_batch(batch_id: int, session: Session = Depends(get_session)):
                 "amount_due": e.amount_due,
                 "enrollment_date": e.enrollment_date.isoformat()
             })
-    batch_tasks = session.exec(select(Task).where(Task.batch_id == batch_id)).all()
     tasks_by_title = {}
     for t in batch_tasks:
-        st = session.get(Student, t.student_id) if t.student_id else None
         key = t.title
         if key not in tasks_by_title:
             tasks_by_title[key] = {
@@ -20173,13 +20253,15 @@ def get_batch(batch_id: int, session: Session = Depends(get_session)):
                 "completed_count": 0,
                 "students": []
             }
-        tasks_by_title[key]["total_assigned"] += 1
+        info = tasks_by_title[key]
+        info["total_assigned"] += 1
         if t.status == "Done":
-            tasks_by_title[key]["completed_count"] += 1
-        tasks_by_title[key]["students"].append({
+            info["completed_count"] += 1
+        student = student_by_id.get(t.student_id) if t.student_id else None
+        info["students"].append({
             "task_id": t.id,
             "student_id": t.student_id,
-            "student_name": st.name if st else "Student",
+            "student_name": student.name if student else "Student",
             "status": t.status,
             "submission_url": getattr(t, "submission_url", None),
             "submission_file": getattr(t, "submission_file", None),
@@ -20196,7 +20278,7 @@ def get_batch(batch_id: int, session: Session = Depends(get_session)):
         "course": {"id": course.id, "title": course.title} if course else None,
         "instructor": {"id": instructor.id, "name": instructor.name} if instructor else None,
         "students": students_list,
-        "tasks": [_task_dict(t, session) for t in batch_tasks],
+        "tasks": _task_dicts(batch_tasks, session),
         "task_summaries": task_summaries,
         "total_tasks_assigned": len(batch_tasks),
         "total_tasks_completed": sum(1 for t in batch_tasks if t.status == "Done"),
@@ -20370,7 +20452,7 @@ def get_student(student_id: int, session: Session = Depends(get_session)):
     notes = session.exec(select(StudentNote).where(StudentNote.student_id == student_id).order_by(StudentNote.created_at.desc())).all()
     uploads = session.exec(select(StudentUpload).where(StudentUpload.student_id == student_id).order_by(StudentUpload.created_at.desc())).all()
     tasks = session.exec(select(Task).where(Task.student_id == student_id).order_by(Task.created_at.desc())).all()
-    tasks_list = [_task_dict(t, session) for t in tasks]
+    tasks_list = _task_dicts(tasks, session)
     return {
         "student": student.dict(),
         "lead": {"id": lead.id, "source": lead.source, "created_at": lead.created_at.isoformat()} if lead else None,
@@ -20941,28 +21023,43 @@ def get_batch_sessions(batch_id: int, session: Session = Depends(get_session)):
         .order_by(InstituteSession.scheduled_start)
     ).all()
     session_items = []
+    enrollments = session.exec(
+        select(Enrollment).where(Enrollment.batch_id == batch_id, Enrollment.status == "Active")
+    ).all()
+    enrolled_student_ids = [e.student_id for e in enrollments if e.student_id]
+    student_by_id = {}
+    if enrolled_student_ids:
+        student_by_id = {
+            s.id: s
+            for s in session.exec(select(Student).where(Student.id.in_(enrolled_student_ids))).all()
+        }
+    session_ids = [s.id for s in sessions]
+    attendance_by_key = {}
+    progress_by_key = {}
+    if session_ids and enrolled_student_ids:
+        for a in session.exec(
+            select(Attendance).where(
+                Attendance.session_id.in_(session_ids),
+                Attendance.student_id.in_(enrolled_student_ids),
+            )
+        ).all():
+            attendance_by_key[(a.session_id, a.student_id)] = a
+        for p in session.exec(
+            select(StudentSessionProgress).where(
+                StudentSessionProgress.session_id.in_(session_ids),
+                StudentSessionProgress.student_id.in_(enrolled_student_ids),
+            )
+        ).all():
+            progress_by_key[(p.session_id, p.student_id)] = p
     for class_session in sessions:
         item = _institute_session_payload(class_session)
-        enrollments = session.exec(
-            select(Enrollment).where(Enrollment.batch_id == batch_id, Enrollment.status == "Active")
-        ).all()
         students = []
         for enrollment in enrollments:
-            student = session.get(Student, enrollment.student_id)
+            student = student_by_id.get(enrollment.student_id)
             if not student:
                 continue
-            attendance = session.exec(
-                select(Attendance).where(
-                    Attendance.session_id == class_session.id,
-                    Attendance.student_id == student.id,
-                )
-            ).first()
-            progress = session.exec(
-                select(StudentSessionProgress).where(
-                    StudentSessionProgress.session_id == class_session.id,
-                    StudentSessionProgress.student_id == student.id,
-                )
-            ).first()
+            attendance = attendance_by_key.get((class_session.id, student.id))
+            progress = progress_by_key.get((class_session.id, student.id))
             students.append({
                 "id": student.id,
                 "name": student.name,
@@ -21469,7 +21566,7 @@ def get_student_portal_tasks(session: Session = Depends(get_session)):
     tasks_rows = session.exec(
         select(Task).where(Task.student_id == student.id).order_by(Task.created_at.desc())
     ).all()
-    tasks = [_task_dict(t, session) for t in tasks_rows]
+    tasks = _task_dicts(tasks_rows, session)
     return {"tasks": tasks, "total": len(tasks), "completed": sum(1 for t in tasks if t.get("status") == "Done")}
 
 
