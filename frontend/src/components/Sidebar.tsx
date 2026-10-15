@@ -66,8 +66,8 @@ const defaultSidebarSections = [
       { id: "item-dashboard", name: "Dashboard", icon: "LayoutDashboard", href: "/", roles: ["Admin", "Employee", "Client", "Intern", "SalesManager", "Demo"] },
       { id: "item-work-queue", name: "My Work Queue", icon: "LayoutList", href: "/work-queue", roles: ["Demo", "Employee", "Intern"] },
       { id: "item-notifications", name: "Notifications", icon: "Bell", href: "/notifications", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
-      { id: "item-inbox", name: "Inbox", icon: "Inbox", href: "/inbox", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
-      { id: "item-followups", name: "Follow-ups", icon: "CalendarClock", href: "/followups", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
+      { id: "item-inbox", name: "Inbox", icon: "Inbox", href: "/inbox", roles: ["Admin", "Demo"] },
+      { id: "item-followups", name: "Follow-ups", icon: "CalendarClock", href: "/followups", roles: ["Admin", "Demo"] },
     ],
   },
   {

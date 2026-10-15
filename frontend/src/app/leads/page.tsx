@@ -2,7 +2,7 @@
 import { API_BASE_URL } from "@/config";
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ArrowUpRight, Clock, Edit2, Trash2, Tag, GraduationCap, CalendarClock, Video, PhoneCall, MapPin, UserRound } from "lucide-react";
+import { Search, Plus, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ArrowUpRight, Clock, Edit2, Trash2, Tag, GraduationCap, CalendarClock, Video, PhoneCall, MapPin, UserRound, Zap } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ViewSwitcher, ViewType } from "@/components/ViewSwitcher";
@@ -172,6 +172,7 @@ export default function LeadsPage() {
   const [noteSaving, setNoteSaving] = useState(false);
   const [showSalesAssign, setShowSalesAssign] = useState(false);
   const [pendingLeadForm, setPendingLeadForm] = useState<any>(null);
+  const [autoAssigning, setAutoAssigning] = useState(false);
 
   useEffect(() => { fetchLeads(); }, []);
 
@@ -445,6 +446,39 @@ export default function LeadsPage() {
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{t("leads.subtitle")}</p>
           </div>
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <button
+                id="auto-assign-leads-btn"
+                onClick={async () => {
+                  if (!confirm("Auto-assign all unassigned leads using performance-balanced round-robin?")) return;
+                  setAutoAssigning(true);
+                  try {
+                    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+                    const headers: Record<string, string> = { "Content-Type": "application/json" };
+                    if (token) headers["Authorization"] = `Bearer ${token}`;
+                    if (user?.id) headers["X-User-ID"] = String(user.id);
+                    const res = await fetch(`${API_BASE_URL}/leads/auto-assign-all`, { method: "POST", headers });
+                    const data = await res.json().catch(() => null);
+                    if (!res.ok) throw new Error(data?.detail || "Auto-assign failed");
+                    await fetchLeads(true);
+                    if (data?.assigned > 0) {
+                      alert(`✅ ${data.assigned} lead${data.assigned !== 1 ? "s" : ""} assigned successfully.`);
+                    } else {
+                      alert("All leads are already assigned.");
+                    }
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : "Auto-assign failed");
+                  } finally {
+                    setAutoAssigning(false);
+                  }
+                }}
+                disabled={autoAssigning}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-violet-600 text-white hover:bg-violet-700 shadow-sm transition-all hover:shadow-md active:scale-95 disabled:opacity-60"
+              >
+                {autoAssigning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                Auto Assign
+              </button>
+            )}
             <button 
               onClick={async () => {
                 try {

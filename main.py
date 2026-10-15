@@ -4606,6 +4606,37 @@ def auto_assign_employee_lead(lead_id: int, session: Session = Depends(get_sessi
     return {"ok": True, "employee_id": salesperson.id, "employee_name": salesperson.name}
 
 
+@app.post("/leads/auto-assign-all")
+def auto_assign_all_unassigned_leads(session: Session = Depends(get_session)):
+    """Bulk assign all unassigned leads using round-robin + performance formula."""
+    if current_salesperson_id.get():
+        _require_roles(session, ["Admin", "SuperAdmin", "Demo", "SalesManager"])
+    tenant_id = current_tenant_id.get()
+    q = select(Lead).where(Lead.owner_id == None)
+    if tenant_id and tenant_id != 1:
+        q = q.where(Lead.tenant_id == tenant_id)
+    unassigned = session.exec(q).all()
+    if not unassigned:
+        return {"ok": True, "assigned": 0, "message": "No unassigned leads found"}
+    users, metrics = _salesperson_assignment_metrics(session)
+    if not users:
+        raise HTTPException(status_code=409, detail="No active salespersons found")
+    assigned_count = 0
+    for lead in unassigned:
+        # Pick salesperson with lowest workload + revenue (performance-balanced round-robin)
+        chosen = min(users, key=lambda u: (
+            metrics[u.id]["revenue_collected"],
+            metrics[u.id]["assigned_workload"],
+            u.id or 0,
+        ))
+        lead.owner_id = chosen.id
+        metrics[chosen.id]["assigned_workload"] += 1
+        session.add(lead)
+        assigned_count += 1
+    session.commit()
+    return {"ok": True, "assigned": assigned_count}
+
+
 @app.post("/clients/{client_id}/assign-employee")
 def assign_employee(
     client_id: int, body: AssignEmployeeRequest, session: Session = Depends(get_session)
@@ -12130,6 +12161,7 @@ def intake_website_lead(
             target_tenant_id = int(t_header)
         else:
             target_tenant_id = 1
+    current_tenant_id.set(target_tenant_id)
 
     configured_key = os.getenv("LEAD_INTAKE_API_KEY")
     if configured_key:
@@ -12194,9 +12226,19 @@ def intake_website_lead(
         tenant_id=target_tenant_id,
     )
 
+    # Auto-assign to a salesperson immediately (performance-balanced round-robin)
+    try:
+        salesperson = _choose_revenue_balanced_salesperson(session)
+        lead.owner_id = salesperson.id
+    except Exception:
+        pass  # If no salespersons available, leave unassigned
+
     session.add(lead)
     session.commit()
-    session.refresh(lead)
+    try:
+        session.refresh(lead, execution_options={"skip_tenant": True})
+    except Exception:
+        pass
 
     try:
         page_info = body.page_title or body.source_page or "Website"
@@ -12224,7 +12266,8 @@ def intake_website_lead(
         "source": lead.source,
         "source_page": lead.website,
         "course_interest_id": lead.course_interest_id,
-        "message": "Lead received successfully"
+        "assigned_to": lead.owner_id,
+        "message": "Lead received and assigned successfully"
     }
 
 
@@ -19881,15 +19924,30 @@ def get_batches(course_id: Optional[int] = None, instructor_id: Optional[int] = 
     if status:
         query = query.where(Batch.status == status)
     batches = session.exec(query.order_by(Batch.created_at.desc())).all()
+    if not batches:
+        return {"batches": []}
+
+    # Batch-load courses, instructors and enrollment counts (avoids N+1)
+    batch_ids = [b.id for b in batches]
+    c_ids = list({b.course_id for b in batches if b.course_id})
+    i_ids = list({b.instructor_id for b in batches if b.instructor_id})
+    courses_map = {c.id: c.title for c in session.exec(select(Course).where(Course.id.in_(c_ids))).all()} if c_ids else {}
+    instructors_map = {i.id: i.name for i in session.exec(select(Instructor).where(Instructor.id.in_(i_ids))).all()} if i_ids else {}
+    # Enrollment counts in a single aggregation query
+    enroll_rows = session.exec(
+        select(Enrollment.batch_id, func.count(Enrollment.id).label("cnt"))
+        .where(Enrollment.batch_id.in_(batch_ids))
+        .group_by(Enrollment.batch_id)
+    ).all()
+    enrolled_map = {row.batch_id: row.cnt for row in enroll_rows}
+
     result = []
     for b in batches:
-        course = session.get(Course, b.course_id)
-        instructor = session.get(Instructor, b.instructor_id) if b.instructor_id else None
-        enrolled = session.exec(select(func.count(Enrollment.id)).where(Enrollment.batch_id == b.id)).first() or 0
+        enrolled = enrolled_map.get(b.id, 0)
         result.append({
             "id": b.id, "batch_name": b.batch_name, "batch_code": b.batch_code,
-            "course_id": b.course_id, "course_title": course.title if course else None,
-            "instructor_id": b.instructor_id, "instructor_name": instructor.name if instructor else None,
+            "course_id": b.course_id, "course_title": courses_map.get(b.course_id),
+            "instructor_id": b.instructor_id, "instructor_name": instructors_map.get(b.instructor_id),
             "start_date": b.start_date.isoformat() if b.start_date else None,
             "end_date": b.end_date.isoformat() if b.end_date else None,
             "schedule": b.schedule, "mode": b.mode, "max_seats": b.max_seats,
