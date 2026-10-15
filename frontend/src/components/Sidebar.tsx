@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
 import { useSidebar } from "@/context/SidebarContext";
 import { useTheme } from "@/context/ThemeContext";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type ReactNode, type CSSProperties } from "react";
 import { API_BASE_URL } from "@/config";
 import { useLanguage } from "@/context/LanguageContext";
 import { useNotifications } from "@/context/NotificationContext";
@@ -52,6 +52,17 @@ const INBOX_ROLES = ["Admin", "SalesManager", "Employee", "Demo", "SuperAdmin"];
 // Live count shown next to a sidebar item, if any.
 function badgeCount(item: { id: string; badge?: number }, unreadCount: number, inboxUnread: number): number {
   return item.id === "item-notifications" ? unreadCount : item.id === "item-inbox" ? inboxUnread : item.badge || 0;
+}
+
+const isExternalHref = (href: string) => /^https?:\/\//i.test(href);
+
+// Renders an <a> for external URLs (full-page navigation) and a Next <Link>
+// for internal routes. Used for sidebar items that jump to another app.
+function NavLink({ href, className, style, children }: { href: string; className?: string; style?: CSSProperties; children: ReactNode }) {
+  if (isExternalHref(href)) {
+    return <a href={href} className={className} style={style}>{children}</a>;
+  }
+  return <Link href={href} className={className} style={style}>{children}</Link>;
 }
 
 interface SidebarProps {
@@ -118,7 +129,7 @@ const defaultSidebarSections = [
     id: "section-support",
     heading: "SUPPORT",
     items: [
-      { id: "item-cases", name: "Cases", icon: "HeadphonesIcon", href: "/support/cases", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
+      { id: "item-cases", name: "Cases", icon: "HeadphonesIcon", href: "https://ticketing-one-woad.vercel.app/client/login", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-solutions", name: "Solutions", icon: "BookOpen", href: "/support/solutions", roles: ["Admin", "SalesManager", "Demo"] },
     ],
   },
@@ -239,7 +250,7 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
                 const isFav = favourites?.includes(item.id);
                 const badge = badgeCount(item, unreadCount, inboxUnread);
                 return (
-                  <Link
+                  <NavLink
                     key={item.href}
                     href={item.href}
                     className={cn(
@@ -297,7 +308,7 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
                         />
                       </button>
                     )}
-                  </Link>
+                  </NavLink>
                 );
               })}
             </div>
@@ -696,7 +707,7 @@ export function Sidebar({ role }: SidebarProps) {
                   const IconComp = iconMap[item.icon] || LayoutDashboard;
                   const badge = badgeCount(item, unreadCount, inboxUnread);
                   return (
-                    <Link
+                    <NavLink
                       key={`fav-${item.id}-${item.href}`}
                       href={item.href}
                       className={cn(
@@ -742,7 +753,7 @@ export function Sidebar({ role }: SidebarProps) {
                           <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400 transition-colors" />
                         </button>
                       )}
-                    </Link>
+                    </NavLink>
                   );
                 })}
               </div>

@@ -7654,7 +7654,67 @@ def dashboard_stats(
         won_deals = session.exec(select(Deal).where(Deal.assigned_to == user.id, Deal.stage == "Closed Won")).all()
         closed_deals = session.exec(select(Deal).where(Deal.assigned_to == user.id, Deal.stage.in_(["Closed Won", "Closed Lost"]))).all()
         converted_leads = session.exec(select(Lead).where(Lead.owner_id == user.id, Lead.is_converted == True)).all()
-        
+
+        # ── Charts & trends for the sales dashboard ──────────────────────────
+        import calendar
+        now = datetime.utcnow()
+        my_leads = session.exec(select(Lead).where(Lead.owner_id == user.id)).all()
+        my_clients = session.exec(select(ClientProfile).where(ClientProfile.assignedEmployeeId == user.id)).all()
+        my_calls = session.exec(
+            select(CallLog).where(
+                or_(CallLog.assigned_to == user.name, CallLog.assigned_to == str(user.id))
+            )
+        ).all()
+
+        my_lead_ids = [l.id for l in my_leads if l.id is not None]
+        my_client_ids = [c.id for c in my_clients if c.id is not None]
+        email_filters = []
+        if my_lead_ids:
+            email_filters.append(SentEmail.lead_id.in_(my_lead_ids))
+        if my_client_ids:
+            email_filters.append(SentEmail.client_id.in_(my_client_ids))
+        my_emails = session.exec(select(SentEmail).where(or_(*email_filters))).all() if email_filters else []
+
+        # Last 7 days: calls + emails
+        chart_labels, call_series, email_series = [], [], []
+        for i in range(6, -1, -1):
+            day = now - timedelta(days=i)
+            day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
+            chart_labels.append(day.strftime("%b %d"))
+            call_series.append(sum(1 for c in my_calls if c.createdAt and day_start <= c.createdAt < day_end))
+            email_series.append(sum(1 for e in my_emails if e.sent_at and day_start <= e.sent_at < day_end))
+
+        # Last 6 months: revenue from won deals
+        revenue_series = []
+        for i in range(5, -1, -1):
+            m = now.month - i
+            y = now.year
+            while m <= 0:
+                m += 12
+                y -= 1
+            month_start = datetime(y, m, 1)
+            next_m, next_y = (m + 1, y) if m < 12 else (1, y + 1)
+            month_end = datetime(next_y, next_m, 1)
+            revenue_series.append({
+                "name": calendar.month_abbr[m],
+                "revenue": round(sum(d.value or 0 for d in won_deals if d.created_at and month_start <= d.created_at < month_end), 2),
+            })
+
+        def _count_trend(rows, attr):
+            cur = sum(1 for r in rows if getattr(r, attr, None) and now - timedelta(days=30) <= getattr(r, attr) < now)
+            prev = sum(1 for r in rows if getattr(r, attr, None) and now - timedelta(days=60) <= getattr(r, attr) < now - timedelta(days=30))
+            change = round(((cur - prev) / prev) * 100, 1) if prev else (100.0 if cur else 0.0)
+            return {"current": cur, "previous": prev, "change": change}
+
+        cur_rev = sum(d.value or 0 for d in won_deals if d.created_at and now - timedelta(days=30) <= d.created_at < now)
+        prev_rev = sum(d.value or 0 for d in won_deals if d.created_at and now - timedelta(days=60) <= d.created_at < now - timedelta(days=30))
+        revenue_trend = {
+            "current": round(cur_rev, 2),
+            "previous": round(prev_rev, 2),
+            "change": round(((cur_rev - prev_rev) / prev_rev) * 100, 1) if prev_rev else (100.0 if cur_rev else 0.0),
+        }
+
         return {
             "isSalesManager": True,
             "metrics": {
@@ -7665,6 +7725,21 @@ def dashboard_stats(
                 "revenue_won": round(sum(deal.value or 0 for deal in won_deals), 2),
                 "conversion_percentage": round((len(converted_leads) / assigned_leads_count) * 100, 2) if assigned_leads_count else 0,
                 "deal_win_rate": round((len(won_deals) / len(closed_deals)) * 100, 2) if closed_deals else 0,
+                "calls_logged": len(my_calls),
+                "emails_sent": len(my_emails),
+            },
+            "trends": {
+                "leads": _count_trend(my_leads, "created_at"),
+                "calls": _count_trend(my_calls, "createdAt"),
+                "emails": _count_trend(my_emails, "sent_at"),
+                "deals_won": _count_trend(won_deals, "created_at"),
+                "revenue": revenue_trend,
+            },
+            "charts": {
+                "labels": chart_labels,
+                "calls": call_series,
+                "emails": email_series,
+                "revenue": revenue_series,
             },
             "recent_activity": activities[:5]
         }
@@ -19597,17 +19672,32 @@ class SessionProgressRequest(BaseModel):
 @app.get("/courses")
 def get_courses(session: Session = Depends(get_session)):
     courses = session.exec(select(Course).order_by(Course.created_at.desc())).all()
+    if not courses:
+        return {"courses": []}
+    course_ids = [c.id for c in courses]
+
+    # Aggregate counts in two queries instead of two per course.
+    batch_rows = session.exec(
+        select(Batch.course_id, func.count(Batch.id).label("cnt"))
+        .where(Batch.course_id.in_(course_ids))
+        .group_by(Batch.course_id)
+    ).all()
+    batch_map = {row.course_id: row.cnt for row in batch_rows}
+    enroll_rows = session.exec(
+        select(Enrollment.course_id, func.count(Enrollment.id).label("cnt"))
+        .where(Enrollment.course_id.in_(course_ids))
+        .group_by(Enrollment.course_id)
+    ).all()
+    enroll_map = {row.course_id: row.cnt for row in enroll_rows}
+
     result = []
     for c in courses:
-        # Count batches and students
-        batch_count = session.exec(select(func.count(Batch.id)).where(Batch.course_id == c.id)).first() or 0
-        enrollment_count = session.exec(select(func.count(Enrollment.id)).where(Enrollment.course_id == c.id)).first() or 0
         result.append({
             "id": c.id, "title": c.title, "slug": c.slug, "description": c.description,
             "category": c.category, "duration_weeks": c.duration_weeks, "duration_hours": c.duration_hours,
             "price": c.price, "advance_amount": c.advance_amount, "thumbnail_url": c.thumbnail_url,
             "syllabus": c.syllabus, "prerequisites": c.prerequisites, "is_active": c.is_active,
-            "batch_count": batch_count, "enrollment_count": enrollment_count,
+            "batch_count": batch_map.get(c.id, 0), "enrollment_count": enroll_map.get(c.id, 0),
             "created_at": c.created_at.isoformat(), "updated_at": c.updated_at.isoformat()
         })
     return {"courses": result}
@@ -19715,26 +19805,57 @@ def delete_course(course_id: int, session: Session = Depends(get_session)):
 @app.get("/instructors")
 def get_instructors(session: Session = Depends(get_session)):
     instructors = session.exec(select(Instructor).order_by(Instructor.created_at.desc())).all()
+    if not instructors:
+        return {"instructors": []}
+    instructor_ids = [i.id for i in instructors]
+
+    # Batch-load everything in a handful of queries instead of N+1 per instructor.
+    all_batches = session.exec(select(Batch).where(Batch.instructor_id.in_(instructor_ids))).all()
+    batches_by_instructor: dict = {}
+    batch_to_instructor: dict = {}
+    for b in all_batches:
+        if b.instructor_id is None:
+            continue
+        batches_by_instructor.setdefault(b.instructor_id, []).append(b)
+        batch_to_instructor[b.id] = b.instructor_id
+
+    # Distinct active students per instructor: one query over all their batches.
+    students_by_instructor: dict = {}
+    all_batch_ids = list(batch_to_instructor.keys())
+    if all_batch_ids:
+        enroll_rows = session.exec(
+            select(Enrollment.batch_id, Enrollment.student_id)
+            .where(Enrollment.batch_id.in_(all_batch_ids), Enrollment.status == "Active")
+        ).all()
+        for row in enroll_rows:
+            inst_id = batch_to_instructor.get(row.batch_id)
+            if inst_id is not None:
+                students_by_instructor.setdefault(inst_id, set()).add(row.student_id)
+
+    # Average rating per instructor: one aggregation query.
+    rating_rows = session.exec(
+        select(InstructorFeedback.instructor_id, func.avg(InstructorFeedback.rating).label("avg_rating"))
+        .where(InstructorFeedback.instructor_id.in_(instructor_ids))
+        .group_by(InstructorFeedback.instructor_id)
+    ).all()
+    rating_map = {row.instructor_id: float(row.avg_rating) for row in rating_rows if row.avg_rating is not None}
+
     result = []
     now = datetime.utcnow()
     for i in instructors:
-        instructor_batches = session.exec(select(Batch).where(Batch.instructor_id == i.id)).all()
+        instructor_batches = batches_by_instructor.get(i.id, [])
         batch_count = len(instructor_batches)
         active_batches = sum(1 for batch in instructor_batches if batch.status == "Active")
         upcoming_batches = sum(1 for batch in instructor_batches if batch.status == "Upcoming" or (batch.start_date and batch.start_date > now and batch.status not in ("Completed", "Cancelled")))
         past_batches = sum(1 for batch in instructor_batches if batch.status == "Completed" or (batch.end_date and batch.end_date < now))
-        active_enrollments = []
-        for batch in instructor_batches:
-            active_enrollments.extend(session.exec(select(Enrollment.student_id).where(Enrollment.batch_id == batch.id, Enrollment.status == "Active")).all())
-        feedbacks = session.exec(select(InstructorFeedback).where(InstructorFeedback.instructor_id == i.id)).all()
-        avg_rating = round(sum(f.rating for f in feedbacks) / len(feedbacks), 1) if feedbacks else 0.0
+        avg_rating = round(rating_map[i.id], 1) if i.id in rating_map else 0.0
         result.append({
             "id": i.id, "name": i.name, "email": i.email, "phone": i.phone,
             "bio": i.bio, "expertise": i.expertise, "qualification": i.qualification,
             "experience_years": i.experience_years, "photo_url": i.photo_url, "is_active": i.is_active,
             "avg_rating": avg_rating, "batch_count": batch_count, "active_batches": active_batches,
             "upcoming_batches": upcoming_batches, "past_batches": past_batches,
-            "total_students": len(set(active_enrollments)), "user_id": i.user_id,
+            "total_students": len(students_by_instructor.get(i.id, set())), "user_id": i.user_id,
             "created_at": i.created_at.isoformat()
         })
     return {"instructors": result}
