@@ -596,11 +596,11 @@ export function Sidebar({ role }: SidebarProps) {
         }}
       >
         {/* ── TOP BRANDING ── */}
-        <div className={cn("shrink-0 flex items-center h-16", collapsed ? "justify-center px-2" : "px-3 gap-2")}>
+        <div className={cn("shrink-0 flex items-center h-20", collapsed ? "justify-center px-2" : "px-3 gap-2")}>
           <img
             src="https://scmhub.com/img/scm-hub-logo-c.png"
             alt="SCM Hub"
-            className={cn("block object-contain", collapsed ? "w-8 h-8" : "h-9 w-auto max-w-[170px]")}
+            className={cn("block object-contain", collapsed ? "h-8 w-auto max-w-[56px]" : "h-14 w-auto max-w-[200px]")}
           />
 
           <AnimatePresence>
