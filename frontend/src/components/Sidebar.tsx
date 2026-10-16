@@ -596,7 +596,7 @@ export function Sidebar({ role }: SidebarProps) {
         }}
       >
         {/* ── TOP BRANDING ── */}
-        <div className={cn("shrink-0 flex items-center h-20", collapsed ? "justify-center px-2" : "px-3 gap-2")}>
+        <div className={cn("shrink-0 relative flex items-center justify-center h-20", collapsed ? "px-2" : "px-3")}>
           <img
             src="https://scmhub.com/img/scm-hub-logo-c.png"
             alt="SCM Hub"
@@ -610,7 +610,7 @@ export function Sidebar({ role }: SidebarProps) {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -8 }}
                 transition={{ duration: 0.15 }}
-                className="flex-1 min-w-0 overflow-hidden flex items-center justify-end"
+                className="absolute right-3 top-1/2 -translate-y-1/2"
               >
                 <div className="flex items-center gap-1">
                   <button
