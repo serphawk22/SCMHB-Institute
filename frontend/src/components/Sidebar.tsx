@@ -597,13 +597,11 @@ export function Sidebar({ role }: SidebarProps) {
       >
         {/* ── TOP BRANDING ── */}
         <div className={cn("shrink-0 flex items-center py-2.5", collapsed ? "justify-center px-2" : "px-4 gap-3")}>
-          <div className="shrink-0 w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md">
-            <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4">
-              <path d="M12 3L3 8.5V15.5L12 21L21 15.5V8.5L12 3Z" fill="white" fillOpacity="0.9" />
-              <path d="M12 7L7 10V14L12 17L17 14V10L12 7Z" fill="white" fillOpacity="0.5" />
-              <circle cx="12" cy="12" r="2" fill="white" />
-            </svg>
-          </div>
+          <img
+            src="https://scmhub.com/img/scm-hub-logo-c.png"
+            alt="SCM Hub"
+            className={cn("object-contain", collapsed ? "w-8 h-8" : "h-10 w-auto max-w-[160px]")}
+          />
 
           <AnimatePresence>
             {!collapsed && (
@@ -612,15 +610,11 @@ export function Sidebar({ role }: SidebarProps) {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -8 }}
                 transition={{ duration: 0.15 }}
-                className="flex-1 min-w-0 overflow-hidden flex items-center justify-between"
+                className="flex-1 min-w-0 overflow-hidden flex items-center justify-end"
               >
-                <div>
-                  <span className="block font-bold text-[14px] leading-tight tracking-tight truncate" style={{ color: "var(--text-primary)" }}>SERP Hawk</span>
-                  <span className="block text-[10px] font-medium truncate" style={{ color: "var(--text-secondary)" }}>{t("sidebar.corporate_hq")}</span>
-                </div>
                 <div className="flex items-center gap-1">
-                  <button 
-                    onClick={() => setIsEditMode(!isEditMode)} 
+                  <button
+                    onClick={() => setIsEditMode(!isEditMode)}
                     className={cn("p-1.5 rounded-lg transition-colors", isEditMode ? "bg-blue-100 text-blue-600 dark:bg-blue-900/50" : "text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800")}
                     title={t("sidebar.customize_sidebar")}
                   >
