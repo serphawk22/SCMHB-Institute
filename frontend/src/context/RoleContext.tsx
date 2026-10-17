@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { API_BASE_URL } from '@/config';
 
@@ -150,6 +150,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
+  const loggingOutRef = useRef(false);
 
   useEffect(() => {
     const storedUser = readStoredUser();
@@ -161,7 +162,13 @@ export function RoleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!loading) {
+    if (loggingOutRef.current && pathname === '/opening') {
+      loggingOutRef.current = false;
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!loading && !loggingOutRef.current) {
       if (!isAuthenticated && pathname !== '/login' && pathname !== '/signup' && pathname !== '/' && pathname !== '/opening' && !pathname?.startsWith('/demo_showcase') && pathname !== '/reset-password') {
         router.replace('/login');
       } else if (isAuthenticated && (pathname === '/login' || pathname === '/signup')) {
@@ -217,6 +224,7 @@ export function RoleProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    loggingOutRef.current = true;
     localStorage.removeItem('crm_user');
     setUser(null);
     setIsAuthenticated(false);
