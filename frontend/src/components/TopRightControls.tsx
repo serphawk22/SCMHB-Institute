@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings, LogOut, User, ChevronDown, Menu, X,
@@ -163,6 +164,7 @@ export default function TopRightControls() {
       </div>
 
       {/* Mobile navigation drawer */}
+      {typeof document !== "undefined" && createPortal(
       <AnimatePresence>
         {navOpen && (
           <>
@@ -171,14 +173,14 @@ export default function TopRightControls() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setNavOpen(false)}
-              className="fixed inset-0 z-[80] bg-slate-900/50 backdrop-blur-sm md:hidden"
+              className="fixed inset-0 z-[120] bg-slate-900/50 backdrop-blur-sm md:hidden"
             />
             <motion.aside
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", stiffness: 320, damping: 34 }}
-              className="fixed right-0 top-0 bottom-0 z-[90] w-[85%] max-w-sm bg-white dark:bg-zinc-900 md:hidden flex flex-col shadow-2xl"
+              className="fixed right-0 top-0 bottom-0 z-[130] w-[85%] max-w-sm bg-white dark:bg-zinc-900 md:hidden flex flex-col shadow-2xl"
             >
               <div className="flex items-center justify-between px-5 h-16 border-b border-slate-200 dark:border-zinc-800 shrink-0">
                 <img
@@ -255,7 +257,9 @@ export default function TopRightControls() {
             </motion.aside>
           </>
         )}
-      </AnimatePresence>
+      </AnimatePresence>,
+      document.body
+      )}
     </>
   );
 }
