@@ -38,7 +38,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 // Icon mapping for dynamically loaded sections
-const iconMap: Record<string, any> = {
+export const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
@@ -69,7 +69,7 @@ interface SidebarProps {
   role: Role;
 }
 
-const defaultSidebarSections = [
+export const defaultSidebarSections = [
   {
     id: "section-home",
     heading: null,
@@ -588,7 +588,7 @@ export function Sidebar({ role }: SidebarProps) {
         initial={false}
         animate={{ width: collapsed ? 72 : 280 }}
         transition={{ type: "spring", stiffness: 280, damping: 30 }}
-        className="fixed left-0 top-0 bottom-0 z-50 flex flex-col overflow-hidden"
+        className="fixed left-0 top-0 bottom-0 z-50 hidden flex-col overflow-hidden md:flex"
         style={{
           background: "var(--sidebar-bg)",
           boxShadow: "4px 0 24px rgba(0,0,0,0.06)",
