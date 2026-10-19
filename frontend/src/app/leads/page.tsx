@@ -439,13 +439,13 @@ export default function LeadsPage() {
   return (
     <div className="flex flex-col h-full bg-[#f8fafc] dark:bg-black">
       {/* Header */}
-      <div className="px-6 py-5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-black">
+      <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-black">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{t("leads.title")}</h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">{t("leads.subtitle")}</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900 dark:text-white tracking-tight">{t("leads.title")}</h1>
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">{t("leads.subtitle")}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             {isAdmin && (
               <button
                 id="auto-assign-leads-btn"
@@ -522,21 +522,21 @@ export default function LeadsPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
           {stats.map(s => (
             <div key={s.label} className={`flex items-center gap-3 px-4 py-3 rounded-xl ${s.bg} border border-transparent`}>
-              <p className={`text-xl font-black ${s.color}`}>{loading ? "—" : s.value}</p>
-              <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">{s.label}</p>
+              <p className={`text-lg sm:text-xl font-black ${s.color}`}>{loading ? "—" : s.value}</p>
+              <p className="text-[11px] sm:text-xs text-slate-600 dark:text-slate-300 font-medium">{s.label}</p>
             </div>
           ))}
         </div>
       </div>
 
       {/* Demo Limits Banner */}
-      <div className="px-6 pt-4">
+      <div className="px-4 sm:px-6 pt-4">
         <DemoLimits type="clients" />
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between px-6 py-3 bg-white dark:bg-black border-b border-slate-200 dark:border-slate-800 flex-wrap gap-3">
-        <div className="relative w-72">
+      <div className="flex items-center justify-between px-4 sm:px-6 py-3 bg-white dark:bg-black border-b border-slate-200 dark:border-slate-800 flex-wrap gap-3">
+        <div className="relative w-full sm:w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text" placeholder={t("leads.search_placeholder")}

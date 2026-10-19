@@ -539,10 +539,10 @@ export default function ReportsPage() {
               Admissions & Operations Decision Center
             </span>
           </div>
-          <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-900 dark:text-white">
+          <h1 className="mt-2 text-2xl sm:text-3xl font-black tracking-tight text-slate-900 dark:text-white">
             Comprehensive Institute Reports
           </h1>
-          <p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">
+          <p className="mt-1 text-xs sm:text-sm text-slate-500 dark:text-zinc-400">
             Real-time executive intelligence on leads, enrollments, sales conversions, advance collections, and faculty delivery.
           </p>
         </div>

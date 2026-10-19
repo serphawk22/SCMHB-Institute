@@ -98,11 +98,11 @@ export default function StudentsPage() {
     <div className="space-y-8">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="flex items-center gap-3 text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center"><GraduationCap className="w-5 h-5 text-white" /></div>
+          <h1 className="flex items-center gap-3 text-xl font-bold text-slate-900 dark:text-white sm:text-3xl">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center"><GraduationCap className="w-4 h-4 sm:w-5 sm:h-5 text-white" /></div>
             Students
           </h1>
-          <p className="text-zinc-400 mt-1">Manage all enrolled and prospective students</p>
+          <p className="text-sm text-zinc-400 mt-1">Manage all enrolled and prospective students</p>
         </div>
         {canManageStudents && <button onClick={openCreate} className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 px-5 py-2.5 font-semibold text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 sm:w-auto">
           <Plus className="w-4 h-4" /> Add Student
@@ -111,9 +111,9 @@ export default function StudentsPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[{l:"Total Students",v:total,c:"emerald"},{l:"Active",v:active,c:"green"},{l:"Completed",v:completed,c:"blue"},{l:"Dropped",v:dropped,c:"red"}].map((s,i)=>(
-          <motion.div key={s.l} initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{delay:i*0.05}} className="glass-card rounded-2xl p-5 border border-white/10">
-            <p className={`text-${s.c}-400 text-sm mb-2`}>{s.l}</p>
-            <p className="text-3xl font-bold text-slate-900 dark:text-white">{s.v}</p>
+          <motion.div key={s.l} initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} transition={{delay:i*0.05}} className="glass-card rounded-2xl p-4 sm:p-5 border border-white/10">
+            <p className={`text-${s.c}-400 text-xs sm:text-sm mb-2`}>{s.l}</p>
+            <p className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white">{s.v}</p>
           </motion.div>
         ))}
       </div>
