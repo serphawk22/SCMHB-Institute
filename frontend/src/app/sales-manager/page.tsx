@@ -235,20 +235,20 @@ export default function SalesManagerPage() {
 
   return (
     <div className="min-h-screen space-y-6 pb-24 animate-in fade-in slide-in-from-bottom-4 duration-700 bg-slate-50 dark:bg-slate-950 transition-colors">
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between px-6 pt-6">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-3xl space-y-4">
-          <div className="inline-flex items-center gap-2 rounded-full bg-indigo-100 dark:bg-indigo-500/10 px-4 py-1.5 text-xs font-bold uppercase tracking-[0.2em] text-indigo-600 dark:text-indigo-400">
+          <div className="inline-flex items-center gap-2 rounded-full bg-indigo-100 dark:bg-indigo-500/10 px-4 py-1.5 text-[10px] sm:text-xs font-bold uppercase tracking-[0.2em] text-indigo-600 dark:text-indigo-400">
             <UserCheck className="w-4 h-4" /> {t("sales_manager.workspace")}
           </div>
           <div>
-            <h1 className="text-4xl font-black text-slate-900 dark:text-zinc-50 dark:text-white tracking-tight">{t("sales_manager.title")}</h1>
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black text-slate-900 dark:text-zinc-50 dark:text-white tracking-tight">{t("sales_manager.title")}</h1>
             <p className="mt-3 text-sm leading-relaxed text-slate-500 dark:text-zinc-400 dark:text-slate-400 max-w-2xl font-medium">
               {t("sales_manager.subtitle")}
             </p>
           </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-3 w-full lg:w-auto">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 w-full lg:w-auto">
           <div className="rounded-3xl border border-slate-200 dark:border-zinc-700 dark:border-white/10 bg-white dark:bg-zinc-900 dark:bg-white dark:bg-zinc-900/5 p-5 shadow-sm transition-transform hover:-translate-y-1">
             <div className="flex items-center gap-3 mb-3">
               <div className="p-2 rounded-xl bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400">
@@ -279,23 +279,23 @@ export default function SalesManagerPage() {
         </div>
       </div>
 
-      <section className="space-y-4 px-6">
+      <section className="space-y-4">
         <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
           <div>
-            <h2 className="text-xl font-black text-slate-900 dark:text-zinc-50">My lead pipeline</h2>
+            <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-zinc-50">My lead pipeline</h2>
             <p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">Move prospects from first contact through demos and enrollment.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link href="/leads" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800">
+            <Link href="/leads" className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition hover:bg-slate-50 sm:flex-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800">
               View all leads <ArrowRight size={15} />
             </Link>
-            <Link href="/leads?action=add" className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700">
+            <Link href="/leads?action=add" className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-indigo-700 sm:flex-none">
               Add lead
             </Link>
           </div>
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
           {[
             { label: "Assigned leads", value: leads.length, accent: "text-slate-900 dark:text-white" },
             { label: "Open opportunities", value: openLeads.length, accent: "text-amber-700 dark:text-amber-300" },
@@ -310,7 +310,7 @@ export default function SalesManagerPage() {
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
-          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-zinc-700">
+          <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:border-zinc-700">
             <div>
               <h3 className="font-bold text-slate-900 dark:text-zinc-50">Recent prospects</h3>
               <p className="mt-0.5 text-xs text-slate-500 dark:text-zinc-400">Your latest assigned leads and course interests.</p>
@@ -329,7 +329,7 @@ export default function SalesManagerPage() {
               {openLeads.slice(0, 5).map((lead) => {
                 const leadName = lead.company_name || [lead.first_name, lead.last_name].filter(Boolean).join(" ") || "New lead";
                 return (
-                  <Link key={lead.id} href={`/leads/${lead.id}`} className="flex flex-col gap-2 px-5 py-3 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between dark:hover:bg-zinc-800/60">
+                  <Link key={lead.id} href={`/leads/${lead.id}`} className="flex flex-col gap-2 px-4 py-3 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:hover:bg-zinc-800/60">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold text-slate-900 dark:text-zinc-100">{leadName}</p>
                       <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-zinc-400">{lead.course_interest_title || lead.email || lead.phone || "Course interest not recorded"}</p>
@@ -343,14 +343,14 @@ export default function SalesManagerPage() {
         </div>
       </section>
 
-      <section className="space-y-4 px-6">
-        <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-xl font-black text-slate-900 dark:text-zinc-50">My assigned students</h2><p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">Student profiles, enrollment status, and course handoffs assigned to you.</p></div><Link href="/students" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800">All my students <ArrowRight size={15} /></Link></div>
+      <section className="space-y-4">
+        <div className="flex flex-col flex-wrap gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-zinc-50">My assigned students</h2><p className="mt-1 text-sm text-slate-500 dark:text-zinc-400">Student profiles, enrollment status, and course handoffs assigned to you.</p></div><Link href="/students" className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm font-bold text-slate-700 hover:bg-slate-50 sm:w-auto dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:bg-zinc-800">All my students <ArrowRight size={15} /></Link></div>
         {students.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{students.slice(0, 6).map(student => <Link key={student.id} href={`/students/${student.id}`} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 transition hover:border-emerald-400 dark:border-zinc-700 dark:bg-zinc-900 dark:hover:border-emerald-700"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="truncate font-bold text-slate-900 dark:text-zinc-50">{student.name}</p><p className="mt-1 truncate text-xs text-slate-500 dark:text-zinc-400">{student.active_course || student.email || student.phone || "Course not assigned"}</p></div><span className="shrink-0 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">{student.status}</span></div><p className="mt-3 text-xs text-slate-500 dark:text-zinc-400">{student.enrollment_count} enrollments</p></Link>)}</div> : <div className="rounded-xl border border-dashed border-slate-300 px-5 py-6 text-sm text-slate-500 dark:border-zinc-700 dark:text-zinc-400">No students are assigned to you yet. Students converted from your leads will appear here.</div>}
       </section>
 
-      <div className="px-6 grid gap-6 xl:grid-cols-[400px_1fr]">
+      <div className="grid gap-6 xl:grid-cols-[400px_1fr]">
         
-        <section className="flex flex-col space-y-4 rounded-[2rem] border border-slate-200 dark:border-zinc-700 dark:border-white/10 bg-white dark:bg-zinc-900 dark:bg-slate-900/50 p-6 shadow-sm">
+        <section className="flex flex-col space-y-4 rounded-[2rem] border border-slate-200 dark:border-zinc-700 dark:border-white/10 bg-white dark:bg-zinc-900 dark:bg-slate-900/50 p-4 sm:p-6 shadow-sm">
           <div className="flex items-center justify-between gap-3 mb-2">
             <div>
               <h2 className="text-lg font-black text-slate-900 dark:text-zinc-50 dark:text-white">{t("sales_manager.assigned_accounts")}</h2>
@@ -425,25 +425,25 @@ export default function SalesManagerPage() {
 
         <section className="flex flex-col space-y-6">
           {!selectedClient ? (
-            <div className="h-full flex flex-col items-center justify-center rounded-[2rem] border border-dashed border-slate-300 dark:border-zinc-600 dark:border-slate-700 bg-white dark:bg-zinc-900/50 dark:bg-slate-900/30 p-12 text-center">
-              <div className="w-20 h-20 bg-indigo-50 dark:bg-indigo-900/20 rounded-full flex items-center justify-center mb-6">
+            <div className="h-full flex flex-col items-center justify-center rounded-[2rem] border border-dashed border-slate-300 dark:border-zinc-600 dark:border-slate-700 bg-white dark:bg-zinc-900/50 dark:bg-slate-900/30 p-6 sm:p-12 text-center">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 bg-indigo-50 dark:bg-indigo-900/20 rounded-full flex items-center justify-center mb-6">
                 <Briefcase size={32} className="text-indigo-300 dark:text-indigo-700" />
               </div>
-              <h3 className="text-2xl font-black text-slate-800 dark:text-zinc-100 dark:text-white mb-2">{t("sales_manager.select_account")}</h3>
+              <h3 className="text-xl sm:text-2xl font-black text-slate-800 dark:text-zinc-100 dark:text-white mb-2">{t("sales_manager.select_account")}</h3>
               <p className="text-sm font-medium text-slate-500 dark:text-zinc-400 dark:text-slate-400 max-w-md">
                 {t("sales_manager.select_account_desc")}
               </p>
             </div>
           ) : (
             <>
-              <div className="rounded-[2rem] border border-slate-200 dark:border-zinc-700 dark:border-white/10 bg-white dark:bg-zinc-900 dark:bg-slate-900 p-6 shadow-sm">
+              <div className="rounded-[2rem] border border-slate-200 dark:border-zinc-700 dark:border-white/10 bg-white dark:bg-zinc-900 dark:bg-slate-900 p-4 sm:p-6 shadow-sm">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 dark:text-slate-500 dark:text-zinc-400 mb-1">{t("sales_manager.operating_on")}</p>
-                    <h3 className="text-3xl font-black text-slate-900 dark:text-zinc-50 dark:text-white mb-2">{selectedClient.companyName || selectedClient.name}</h3>
+                    <h3 className="text-xl sm:text-2xl lg:text-3xl font-black text-slate-900 dark:text-zinc-50 dark:text-white mb-2 break-words">{selectedClient.companyName || selectedClient.name}</h3>
                   </div>
                   <div className="flex flex-wrap gap-3">
-                    <Link href={`/admin/clients/${selectedClient.id}`} className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 text-sm font-bold shadow-md shadow-indigo-600/20 transition-all hover:-translate-y-0.5">
+                    <Link href={`/admin/clients/${selectedClient.id}`} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 text-sm font-bold shadow-md shadow-indigo-600/20 transition-all hover:-translate-y-0.5 sm:w-auto">
                       {t("sales_manager.open_profile")} <ArrowRight size={16} />
                     </Link>
                   </div>
@@ -455,7 +455,7 @@ export default function SalesManagerPage() {
                   <button 
                     onClick={() => setActiveTab("note")} 
                     className={cn(
-                      "flex-1 whitespace-nowrap px-6 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors",
+                      "flex-1 whitespace-nowrap px-3 py-3 sm:px-6 sm:py-4 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-colors",
                       activeTab === "note" ? "bg-white dark:bg-zinc-900 dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400" : "text-slate-500 dark:text-zinc-400 dark:text-slate-400 hover:text-slate-700 dark:text-zinc-200 dark:hover:text-slate-200"
                     )}
                   >
@@ -464,7 +464,7 @@ export default function SalesManagerPage() {
                   <button 
                     onClick={() => setActiveTab("activity")} 
                     className={cn(
-                      "flex-1 whitespace-nowrap px-6 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors",
+                      "flex-1 whitespace-nowrap px-3 py-3 sm:px-6 sm:py-4 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-colors",
                       activeTab === "activity" ? "bg-white dark:bg-zinc-900 dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400" : "text-slate-500 dark:text-zinc-400 dark:text-slate-400 hover:text-slate-700 dark:text-zinc-200 dark:hover:text-slate-200"
                     )}
                   >
@@ -473,7 +473,7 @@ export default function SalesManagerPage() {
                   <button 
                     onClick={() => setActiveTab("ticket")} 
                     className={cn(
-                      "flex-1 whitespace-nowrap px-6 py-4 text-sm font-bold flex items-center justify-center gap-2 transition-colors",
+                      "flex-1 whitespace-nowrap px-3 py-3 sm:px-6 sm:py-4 text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 sm:gap-2 transition-colors",
                       activeTab === "ticket" ? "bg-white dark:bg-zinc-900 dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400" : "text-slate-500 dark:text-zinc-400 dark:text-slate-400 hover:text-slate-700 dark:text-zinc-200 dark:hover:text-slate-200"
                     )}
                   >
@@ -481,7 +481,7 @@ export default function SalesManagerPage() {
                   </button>
                 </div>
 
-                <div className="p-6 md:p-8 flex-1">
+                <div className="p-4 sm:p-6 md:p-8 flex-1">
                   <AnimatePresence mode="wait">
                     {activeTab === "note" && (
                       <motion.div
@@ -580,27 +580,27 @@ export default function SalesManagerPage() {
         </section>
       </div>
 
-      <div className="px-6">
-        <section className="rounded-[2rem] border border-slate-200 dark:border-zinc-700 dark:border-white/10 bg-white dark:bg-zinc-900 dark:bg-slate-900 p-6 shadow-sm">
+      <div>
+        <section className="rounded-[2rem] border border-slate-200 dark:border-zinc-700 dark:border-white/10 bg-white dark:bg-zinc-900 dark:bg-slate-900 p-4 sm:p-6 shadow-sm">
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div>
               <h2 className="text-lg font-black text-slate-900 dark:text-zinc-50 dark:text-white">{t("sales_manager.quick_tools")}</h2>
               <p className="mt-1 text-sm font-medium text-slate-500 dark:text-zinc-400 dark:text-slate-400">{t("sales_manager.quick_tools_desc")}</p>
             </div>
-            <div className="flex flex-wrap gap-3">
-              <Link href="/work-queue" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 transition hover:bg-slate-50 dark:hover:bg-zinc-800">
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <Link href="/work-queue" className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 transition hover:bg-slate-50 dark:hover:bg-zinc-800">
                 <Clock size={16} /> My work queue
               </Link>
-              <Link href="/enrollments" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 transition hover:bg-slate-50 dark:hover:bg-zinc-800">
+              <Link href="/enrollments" className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 transition hover:bg-slate-50 dark:hover:bg-zinc-800">
                 <FileText size={16} /> My enrollments & slips
               </Link>
-              <Link href="/email-agent" className="inline-flex items-center gap-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-500/20 dark:hover:bg-indigo-500/30 px-5 py-2.5 text-sm font-bold text-indigo-700 dark:text-indigo-300 transition-colors">
+              <Link href="/email-agent" className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-500/20 dark:hover:bg-indigo-500/30 px-5 py-2.5 text-sm font-bold text-indigo-700 dark:text-indigo-300 transition-colors">
                 <Mail size={16} /> {t("sales_manager.draft_outreach")}
               </Link>
-              <Link href="/invoices" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 dark:border-slate-700 bg-white dark:bg-zinc-900 dark:bg-slate-800 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700">
+              <Link href="/invoices" className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 dark:border-slate-700 bg-white dark:bg-zinc-900 dark:bg-slate-800 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700">
                 <FileText size={16} /> {t("sales_manager.issue_invoice")}
               </Link>
-              <Link href="/admin/requests" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 dark:border-slate-700 bg-white dark:bg-zinc-900 dark:bg-slate-800 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700">
+              <Link href="/admin/requests" className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 dark:border-zinc-700 dark:border-slate-700 bg-white dark:bg-zinc-900 dark:bg-slate-800 px-5 py-2.5 text-sm font-bold text-slate-700 dark:text-zinc-200 dark:text-slate-300 transition hover:bg-slate-50 dark:hover:bg-slate-700">
                 <MessageCircle size={16} /> {t("sales_manager.admin_tickets")}
               </Link>
             </div>
