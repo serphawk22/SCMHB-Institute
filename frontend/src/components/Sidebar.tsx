@@ -788,7 +788,7 @@ export function Sidebar({ role }: SidebarProps) {
         whileHover={{ scale: 1.1 }}
         whileTap={{ scale: 0.92 }}
         title={collapsed ? t("sidebar.expand_sidebar") : t("sidebar.collapse_sidebar")}
-        className="fixed top-[52px] z-[60] -translate-x-1/2 flex items-center justify-center w-7 h-7 rounded-full border-2 shadow-md transition-colors"
+        className="fixed top-[52px] z-[60] hidden -translate-x-1/2 items-center justify-center w-7 h-7 rounded-full border-2 shadow-md transition-colors md:flex"
         style={{
           background: "var(--sidebar-bg)",
           borderColor: "var(--border)",
