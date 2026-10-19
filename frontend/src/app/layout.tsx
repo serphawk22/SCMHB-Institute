@@ -12,6 +12,7 @@ import { LanguageProvider } from "@/context/LanguageContext";
 import { ThemeProvider } from "@/context/ThemeContext";
 import I18nProvider from "@/i18n/I18nProvider";
 import { Sidebar } from "@/components/Sidebar";
+import { BottomNav } from "@/components/BottomNav";
 import { ClientSidebar } from "@/components/ClientSidebar";
 import { SyncProvider } from "@/context/SyncContext";
 import { GlobalLoader } from "@/components/GlobalLoader";
@@ -170,6 +171,7 @@ function AppContent({ children }: { children: React.ReactNode }) {
           <AdminMainContent>
             {children}
           </AdminMainContent>
+          <BottomNav />
           {showChatbot && <Chatbot />}
         </div>
       </SidebarProvider>
