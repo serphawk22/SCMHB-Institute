@@ -639,8 +639,8 @@ export default function LeadsPage() {
             })}
           </div>
         ) : currentView === 'graph' ? (
-          <div className="p-8 h-full">
-            <div className="bg-white dark:bg-[#111111] p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-[#222222] h-[500px]">
+          <div className="p-4 sm:p-8 h-full">
+            <div className="bg-white dark:bg-[#111111] p-4 sm:p-6 rounded-2xl shadow-sm border border-slate-200 dark:border-[#222222] h-[500px]">
               <h3 className="text-lg font-bold mb-6 text-slate-900 dark:text-white">{t("leads.leads_by_status")}</h3>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={STAGES.map(s => ({ name: s, count: filtered.filter(l => stageOf(l) === s).length }))} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
@@ -654,7 +654,7 @@ export default function LeadsPage() {
             </div>
           </div>
         ) : currentView === 'pivot' ? (
-          <div className="p-6 h-full overflow-auto">
+          <div className="p-3 sm:p-6 h-full overflow-auto">
             <table className="w-full text-left border-collapse bg-white dark:bg-[#111111] border border-slate-200 dark:border-[#222222] rounded-2xl overflow-hidden shadow-sm">
               <thead>
                 <tr className="bg-slate-50 dark:bg-[#000000] border-b border-slate-200 dark:border-[#222222] text-xs uppercase tracking-wider text-slate-500 dark:text-[#a3a3a3]">
@@ -680,15 +680,15 @@ export default function LeadsPage() {
         ) : (
           <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 z-10">
-              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-[12px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400">
-                <th className="px-5 py-3 font-semibold">Student</th>
-                <th className="px-5 py-3 font-semibold">Course</th>
-                <th className="px-5 py-3 font-semibold">Contact</th>
-                <th className="px-5 py-3 font-semibold">Source</th>
-                <th className="px-5 py-3 font-semibold">Sales person</th>
-                <th className="px-5 py-3 font-semibold">Stage</th>
-                <th className="px-5 py-3 font-semibold">Scheduled</th>
-                <th className="px-5 py-3 font-semibold text-right">Actions</th>
+              <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-[11px] sm:text-[12px] uppercase tracking-wider font-semibold text-slate-500 dark:text-slate-400">
+                <th className="px-3 sm:px-5 py-3 font-semibold">Student</th>
+                <th className="hidden sm:table-cell px-3 sm:px-5 py-3 font-semibold">Course</th>
+                <th className="px-3 sm:px-5 py-3 font-semibold">Contact</th>
+                <th className="hidden md:table-cell px-3 sm:px-5 py-3 font-semibold">Source</th>
+                <th className="hidden lg:table-cell px-3 sm:px-5 py-3 font-semibold">Sales person</th>
+                <th className="px-3 sm:px-5 py-3 font-semibold">Stage</th>
+                <th className="hidden sm:table-cell px-3 sm:px-5 py-3 font-semibold">Scheduled</th>
+                <th className="px-3 sm:px-5 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -700,7 +700,7 @@ export default function LeadsPage() {
                     onClick={() => router.push(`/leads/${lead.id}`)}
                     className="hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer group transition-colors"
                   >
-                    <td className="px-5 py-3">
+                    <td className="px-3 sm:px-5 py-3">
                       <div className="flex flex-col">
                         <span className="font-semibold text-slate-900 dark:text-white text-sm group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors flex items-center gap-1">
                           {lead.company_name}
@@ -712,27 +712,27 @@ export default function LeadsPage() {
                             <a href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`}
                               target="_blank" rel="noreferrer"
                               onClick={e => e.stopPropagation()}
-                              className="hover:text-blue-600 hover:underline truncate max-w-[180px]">
+                              className="hover:text-blue-600 hover:underline truncate max-w-[120px] sm:max-w-[180px]">
                               {lead.website.replace(/^https?:\/\//, '')}
                             </a>
                           </div>
                         )}
                       </div>
                     </td>
-                    <td className="px-5 py-3 text-[13px] text-slate-600 dark:text-slate-300">{lead.course_interest_title || lead.industry || "—"}</td>
-                    <td className="px-5 py-3">
+                    <td className="hidden sm:table-cell px-3 sm:px-5 py-3 text-[13px] text-slate-600 dark:text-slate-300">{lead.course_interest_title || lead.industry || "—"}</td>
+                    <td className="px-3 sm:px-5 py-3">
                       <div className="flex flex-col gap-0.5">
-                        {lead.email && <div className="flex items-center gap-1 text-[12px] text-slate-500"><Mail className="w-3 h-3" /><span className="truncate max-w-[160px]">{lead.email}</span></div>}
-                        {lead.phone && <div className="flex items-center gap-1 text-[12px] text-slate-500"><Phone className="w-3 h-3" /><span>{lead.phone}</span></div>}
+                        {lead.email && <div className="flex items-center gap-1 text-[12px] text-slate-500"><Mail className="w-3 h-3 shrink-0" /><span className="truncate max-w-[110px] sm:max-w-[160px]">{lead.email}</span></div>}
+                        {lead.phone && <div className="flex items-center gap-1 text-[12px] text-slate-500"><Phone className="w-3 h-3 shrink-0" /><span>{lead.phone}</span></div>}
                         {!lead.email && !lead.phone && <span className="text-slate-400 text-[12px]">—</span>}
                       </div>
                     </td>
-                    <td className="px-5 py-3">
+                    <td className="hidden md:table-cell px-3 sm:px-5 py-3">
                       <span className="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                         {lead.source || "Unknown"}
                       </span>
                     </td>
-                    <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                    <td className="hidden lg:table-cell px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
                       {isAdmin ? (
                         <select
                           aria-label={`Assign sales person for ${lead.company_name}`}
@@ -750,19 +750,19 @@ export default function LeadsPage() {
                         <span className="inline-flex items-center gap-1.5 text-[13px] text-slate-600 dark:text-slate-300"><UserRound className="w-3.5 h-3.5 text-slate-400" />{lead.owner_name || "Unassigned"}</span>
                       )}
                     </td>
-                    <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
+                    <td className="px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
                       <select
                         aria-label={`Stage for ${lead.company_name}`}
                         value={stage}
                         onChange={e => changeStage(lead, e.target.value as Stage)}
-                        className={`px-2.5 py-1.5 rounded-lg text-[12px] font-bold border cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/30 ${STAGE_STYLE[stage].chip}`}
+                        className={`px-2 sm:px-2.5 py-1.5 rounded-lg text-[11px] sm:text-[12px] font-bold border cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/30 ${STAGE_STYLE[stage].chip}`}
                       >
                         {STAGES.map(s => <option key={s} value={s} className="text-slate-900 bg-white">{s}</option>)}
                       </select>
                     </td>
-                    <td className="px-5 py-3"><ScheduleChip lead={lead} /></td>
-                    <td className="px-5 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
+                    <td className="hidden sm:table-cell px-3 sm:px-5 py-3"><ScheduleChip lead={lead} /></td>
+                    <td className="px-3 sm:px-5 py-3 text-right">
+                      <div className="flex items-center justify-end gap-0.5 sm:gap-1">
                         {lead.converted_student_id ? (
                           <button
                             onClick={e => { e.stopPropagation(); router.push(`/students/${lead.converted_student_id}`); }}
@@ -780,7 +780,7 @@ export default function LeadsPage() {
                             onEnrolled={fetchLeads}
                           />
                         )}
-                        <button onClick={e => handleAddNote(lead, e)} title={t("leads.add_note")} className="p-1.5 rounded-lg hover:bg-yellow-100 dark:hover:bg-yellow-900/30 text-slate-400 hover:text-yellow-600 transition-colors">
+                        <button onClick={e => handleAddNote(lead, e)} title={t("leads.add_note")} className="hidden sm:inline-flex p-1.5 rounded-lg hover:bg-yellow-100 dark:hover:bg-yellow-900/30 text-slate-400 hover:text-yellow-600 transition-colors">
                           <Tag className="w-3.5 h-3.5" />
                         </button>
                         <button onClick={e => openEdit(lead, e)} title={t("leads.edit_lead")} className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-slate-400 hover:text-blue-600 transition-colors">

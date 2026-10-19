@@ -17,19 +17,20 @@ export function ViewSwitcher({ currentView, onViewChange }: ViewSwitcherProps) {
   ];
 
   return (
-    <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
+    <div className="flex max-w-full bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
       {views.map((v) => (
         <button
           key={v.id}
           onClick={() => onViewChange(v.id)}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+          title={v.label}
+          className={`flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
             currentView === v.id
               ? 'bg-white dark:bg-slate-700 text-blue-600 shadow-sm'
               : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-700/50'
           }`}
         >
           {v.icon}
-          {v.label}
+          <span className="hidden sm:inline">{v.label}</span>
         </button>
       ))}
     </div>
