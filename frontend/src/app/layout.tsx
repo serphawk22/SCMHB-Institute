@@ -36,6 +36,13 @@ function AdminMainContent({ children }: { children: React.ReactNode }) {
 
   return (
     <main className={`relative z-10 min-h-screen transition-all duration-300 ml-0 ${collapsed ? "md:ml-[72px]" : "md:ml-[280px]"}`}>
+      <div className="fixed top-4 left-4 z-[70] md:hidden">
+        <img
+          src="https://scmhub.com/img/scm-hub-logo-c.png"
+          alt="SCM Hub"
+          className="h-8 w-auto object-contain"
+        />
+      </div>
       <TopRightControls />
       <div className={isClientDetail ? "w-full h-full pr-4 md:pr-20" : "pt-[76px] px-4 sm:px-6 md:px-8 pb-6 md:pb-8 pr-4 sm:pr-6 md:pr-24 max-w-[1600px] mx-auto h-full"}>
         {children}
@@ -208,6 +215,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         {/* Suppress Google Translate native toolbar */}
         <style>{`
           .goog-te-banner-frame, .goog-te-balloon-frame { display: none !important; }
