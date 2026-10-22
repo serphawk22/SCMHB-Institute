@@ -73,11 +73,25 @@ interface InstituteData {
   sales_stats?: { user_id: number; name: string; leads_assigned: number; leads_converted: number; conversion_rate: number }[];
 }
 
+interface SalesPerformanceRep extends SalesKPIs {
+  user_id: number;
+  name: string;
+  email: string;
+  role: string;
+  recent_conversions?: any[];
+}
+
 interface SalesReport {
-  company_overview?: SalesKPIs & {
-    total_tuition_value: number;
-    overall_conversion_rate: number;
+  company_overview?: Partial<SalesKPIs> & {
+    total_tuition_value?: number;
+    overall_conversion_rate?: number;
+    total_leads_in_range?: number;
+    total_students_enrolled_in_range?: number;
+    total_followups?: number;
+    total_pending_due?: number;
+    total_collected_all_time?: number;
   };
+  sales_performance?: SalesPerformanceRep[];
   lead_sources?: LeadSource[];
   lead_pipeline_stages?: PipelineStage[];
   daily_trends?: { date: string; leads: number; demos: number; enrollments: number }[];
@@ -201,9 +215,35 @@ export default function InstituteAnalyticsPage() {
   }, [startDate, endDate, isAllTime, user?.id, role]);
 
   // ── Derived data ──
+  const myPerformance = useMemo(() => {
+    if (!salesData?.sales_performance || salesData.sales_performance.length === 0) return null;
+    if (user?.id) {
+      const found = salesData.sales_performance.find(p => p.user_id === user.id);
+      if (found) return found;
+    }
+    return salesData.sales_performance[0] || null;
+  }, [salesData, user?.id]);
+
+  const overview = useMemo(() => {
+    const o = salesData?.company_overview;
+    const p = myPerformance;
+    return {
+      leads_assigned: p?.leads_assigned ?? o?.leads_assigned ?? o?.total_leads_in_range ?? 0,
+      total_leads_all_time: p?.total_leads_all_time ?? o?.total_leads_all_time ?? 0,
+      students_enrolled: p?.students_enrolled ?? o?.students_enrolled ?? o?.total_students_enrolled_in_range ?? 0,
+      conversion_rate: p?.conversion_rate ?? o?.conversion_rate ?? o?.overall_conversion_rate ?? 0,
+      demos_scheduled: p?.demos_scheduled ?? o?.demos_scheduled ?? 0,
+      demos_successful: p?.demos_successful ?? o?.demos_successful ?? 0,
+      demo_success_rate: p?.demo_success_rate ?? o?.demo_success_rate ?? o?.demo_conversion_rate ?? 0,
+      followups_count: p?.followups_count ?? o?.followups_count ?? o?.total_followups ?? 0,
+      tuition_booked: p?.tuition_booked ?? o?.tuition_booked ?? o?.total_tuition_value ?? 0,
+      advance_collected: p?.advance_collected ?? o?.advance_collected ?? 0,
+      pending_due: p?.pending_due ?? o?.pending_due ?? o?.total_pending_due ?? 0,
+    };
+  }, [salesData, myPerformance]);
+
   const sourceData = useMemo(() => (salesData?.lead_sources || []).filter(s => s.total_leads > 0), [salesData]);
   const pipelineData = useMemo(() => (salesData?.lead_pipeline_stages || []).filter(s => s.count > 0), [salesData]);
-  const overview = salesData?.company_overview;
   const monthlyTrends = salesData?.monthly_trends || [];
 
   // ── Loading state ──
@@ -360,7 +400,7 @@ export default function InstituteAnalyticsPage() {
                     </div>
                   ) : (
                     <div className="space-y-3 overflow-y-auto max-h-[280px] pr-1">
-                      {sourceData.sort((a, b) => b.total_leads - a.total_leads).map((s, i) => (
+                      {[...sourceData].sort((a, b) => b.total_leads - a.total_leads).map((s, i) => (
                         <div key={s.source} className="p-3 bg-white/5 dark:bg-white/5 rounded-xl border border-white/10">
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
