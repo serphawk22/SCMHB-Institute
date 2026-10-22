@@ -107,6 +107,7 @@ export const defaultSidebarSections = [
     items: [
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-institute-analytics", name: "My Analytics", icon: "PieChart", href: "/institute-analytics", roles: ["Admin", "SalesManager", "Employee", "Demo"] },
       { id: "item-calls", name: "Calls", icon: "Phone", href: "/calls", roles: ["Admin", "SalesManager", "Demo"] },
     ],
   },
@@ -462,9 +463,7 @@ export function Sidebar({ role }: SidebarProps) {
                 i.id !== "item-deals" &&
                 i.href !== "/pipeline" &&
                 i.id !== "item-meetings" &&
-                i.href !== "/meetings" &&
-                i.id !== "item-institute-analytics" &&
-                i.href !== "/institute-analytics"),
+                i.href !== "/meetings"),
             });
             const mergedSectionsClean = mergedSections.map(stripDisabled);
             

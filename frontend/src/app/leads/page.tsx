@@ -2,7 +2,7 @@
 import { API_BASE_URL } from "@/config";
 import React, { useState, useEffect, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Plus, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ArrowUpRight, Clock, Edit2, Trash2, Tag, GraduationCap, CalendarClock, Video, PhoneCall, MapPin, UserRound, Zap } from "lucide-react";
+import { Search, Plus, Building2, Globe, Mail, Phone, Upload, Download, X, Loader2, ArrowUpRight, Clock, Edit2, Trash2, Tag, GraduationCap, CalendarClock, Video, PhoneCall, MapPin, UserRound, Zap, AlertTriangle, RefreshCw } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ViewSwitcher, ViewType } from "@/components/ViewSwitcher";
@@ -173,6 +173,11 @@ export default function LeadsPage() {
   const [showSalesAssign, setShowSalesAssign] = useState(false);
   const [pendingLeadForm, setPendingLeadForm] = useState<any>(null);
   const [autoAssigning, setAutoAssigning] = useState(false);
+
+  // ── Duplicate detection state ──
+  const [duplicateLead, setDuplicateLead] = useState<Lead | null>(null);
+  const [duplicateNewStage, setDuplicateNewStage] = useState<Stage>("New");
+  const [overwriting, setOverwriting] = useState(false);
 
   useEffect(() => { fetchLeads(); }, []);
 
@@ -368,12 +373,56 @@ export default function LeadsPage() {
         setShowModal(false);
         fetchLeads();
       } else {
+        // ── Duplicate detection: same name + same phone ──
+        const nameNorm = (form.company_name || "").trim().toLowerCase();
+        const phoneNorm = (form.phone || "").replace(/\D/g, "");
+        const duplicate = phoneNorm
+          ? leads.find(l =>
+              l.company_name.trim().toLowerCase() === nameNorm &&
+              (l.phone || "").replace(/\D/g, "") === phoneNorm
+            )
+          : leads.find(l => l.company_name.trim().toLowerCase() === nameNorm);
+
+        if (duplicate) {
+          setDuplicateLead(duplicate);
+          setDuplicateNewStage(stageOf(duplicate));
+          setPendingLeadForm(payload);
+          setSaving(false);
+          return;
+        }
+
         // New lead: show sales assign modal
         setPendingLeadForm(payload);
         setShowModal(false);
         setShowSalesAssign(true);
       }
     } finally { setSaving(false); }
+  };
+
+  /** Overwrite an existing duplicate: update its stage (and optionally source/notes) then close. */
+  const handleOverwriteDuplicate = async () => {
+    if (!duplicateLead || !pendingLeadForm) return;
+    setOverwriting(true);
+    try {
+      const patch: any = {
+        status: duplicateNewStage,
+        source: pendingLeadForm.source || duplicateLead.source,
+        notes: pendingLeadForm.notes
+          ? (duplicateLead.notes ? `${duplicateLead.notes}\n---\n${pendingLeadForm.notes}` : pendingLeadForm.notes)
+          : duplicateLead.notes,
+      };
+      await fetch(`${API_BASE_URL}/leads/${duplicateLead.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...duplicateLead, ...patch }),
+      });
+      setDuplicateLead(null);
+      setPendingLeadForm(null);
+      setShowModal(false);
+      fetchLeads();
+    } finally {
+      setOverwriting(false);
+    }
   };
 
   const doCreateLead = async (employeeId: number | null, _employeeName: string | null) => {
@@ -1010,6 +1059,94 @@ export default function LeadsPage() {
         onAssign={doCreateLead}
         entityType="lead"
       />
+
+      {/* ── Duplicate Lead Modal ── */}
+      <AnimatePresence>
+        {duplicateLead && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.92, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.92, opacity: 0, y: 20 }}
+              transition={{ type: "spring", stiffness: 300, damping: 28 }}
+              className="bg-white dark:bg-[#0f0f0f] rounded-2xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-700 overflow-hidden"
+            >
+              {/* Header */}
+              <div className="flex items-center gap-3 px-6 py-5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800/50">
+                <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">Duplicate Lead Detected</h2>
+                  <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">A lead with the same name and phone already exists</p>
+                </div>
+              </div>
+
+              {/* Existing lead info */}
+              <div className="px-6 py-4 space-y-3">
+                <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Existing Lead</p>
+                  <p className="font-semibold text-slate-900 dark:text-white">{duplicateLead.company_name}</p>
+                  <div className="flex flex-wrap gap-3 mt-1.5 text-xs text-slate-500">
+                    {duplicateLead.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3" />{duplicateLead.phone}</span>}
+                    {duplicateLead.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3" />{duplicateLead.email}</span>}
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold border ${
+                      STAGE_STYLE[stageOf(duplicateLead)].chip
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${STAGE_STYLE[stageOf(duplicateLead)].dot}`} />
+                      {stageOf(duplicateLead)}
+                    </span>
+                    {duplicateLead.owner_name && (
+                      <span className="text-xs text-slate-500 flex items-center gap-1"><UserRound className="w-3 h-3" />{duplicateLead.owner_name}</span>
+                    )}
+                  </div>
+                </div>
+
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  Would you like to <span className="font-semibold text-amber-600 dark:text-amber-400">overwrite</span> the existing lead with updated info and a new stage, or <span className="font-semibold">cancel</span> and go back?
+                </p>
+
+                {/* Stage selector for overwrite */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">
+                    New Stage (if overwriting)
+                  </label>
+                  <select
+                    value={duplicateNewStage}
+                    onChange={e => setDuplicateNewStage(e.target.value as Stage)}
+                    className="w-full px-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all"
+                  >
+                    {STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50">
+                <button
+                  onClick={() => { setDuplicateLead(null); setPendingLeadForm(null); }}
+                  className="flex-1 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition-all"
+                >
+                  Cancel — Go Back
+                </button>
+                <button
+                  onClick={handleOverwriteDuplicate}
+                  disabled={overwriting}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white font-semibold text-sm hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-md shadow-amber-500/20"
+                >
+                  {overwriting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                  Overwrite & Update Stage
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Schedule follow-up / demo (asked when a lead moves to Follow-up or Demo) */}
       <AnimatePresence>
