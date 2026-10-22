@@ -6,11 +6,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis
 } from "recharts";
+import Link from "next/link";
 import {
   TrendingUp, Users, BookOpen, Layers, GraduationCap, DollarSign, Star, Target,
   Loader2, BarChart2, UserCog, PieChart as PieChartIcon, ArrowUpRight, Phone, Video,
   CheckCircle2, Clock, AlertCircle, RefreshCw, Download, Sparkles, Award, Activity,
-  ChevronDown, CalendarDays, UserCheck, Filter
+  ChevronDown, CalendarDays, UserCheck, Filter, Mail, Search, ExternalLink, UserRound
 } from "lucide-react";
 import { useRole } from "@/context/RoleContext";
 
@@ -209,42 +210,156 @@ export default function InstituteAnalyticsPage() {
     }
   };
 
+  // ── Assigned Leads state (for sales users) ──
+  const [myLeads, setMyLeads] = useState<any[]>([]);
+  const [leadsLoading, setLeadsLoading] = useState(false);
+  const [leadsSearch, setLeadsSearch] = useState("");
+  const [leadsStageFilter, setLeadsStageFilter] = useState("All");
+
+  const loadMyLeads = async () => {
+    if (!isSalesPerson || !user?.id) return;
+    setLeadsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/leads?owner_id=${user.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        const list: any[] = data.leads || [];
+        const mine = list.filter((l: any) => l.owner_id === user.id || String(l.owner_id) === String(user.id));
+        setMyLeads(mine.length > 0 ? mine : list);
+      }
+    } catch (e) {
+      console.warn("Could not load assigned leads", e);
+    } finally {
+      setLeadsLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadSalesReport();
+    if (isSalesPerson && user?.id) {
+      loadMyLeads();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startDate, endDate, isAllTime, user?.id, role]);
 
   // ── Derived data ──
+  const dateFilteredLeads = useMemo(() => {
+    if (isAllTime) return myLeads;
+    const start = new Date(startDate).getTime();
+    const end = new Date(endDate + "T23:59:59").getTime();
+    return myLeads.filter(l => {
+      if (!l.created_at) return true;
+      const t = new Date(l.created_at).getTime();
+      return t >= start && t <= end;
+    });
+  }, [myLeads, startDate, endDate, isAllTime]);
+
   const myPerformance = useMemo(() => {
     if (!salesData?.sales_performance || salesData.sales_performance.length === 0) return null;
     if (user?.id) {
-      const found = salesData.sales_performance.find(p => p.user_id === user.id);
+      const found = salesData.sales_performance.find(p => String(p.user_id) === String(user.id));
+      if (found) return found;
+    }
+    if (user?.email) {
+      const found = salesData.sales_performance.find(p => p.email && p.email.toLowerCase() === user.email.toLowerCase());
       if (found) return found;
     }
     return salesData.sales_performance[0] || null;
-  }, [salesData, user?.id]);
+  }, [salesData, user?.id, user?.email]);
+
+  const sourceLeadsCount = useMemo(() => {
+    return (salesData?.lead_sources || []).reduce((acc, s) => acc + (Number(s.total_leads) || 0), 0);
+  }, [salesData]);
+
+  const sourceConvertedCount = useMemo(() => {
+    return (salesData?.lead_sources || []).reduce((acc, s) => acc + (Number(s.converted_students) || 0), 0);
+  }, [salesData]);
+
+  const sourceTuition = useMemo(() => {
+    return (salesData?.lead_sources || []).reduce((acc, s) => acc + (Number((s as any).tuition_booked) || 0), 0);
+  }, [salesData]);
+
+  const sourceAdvance = useMemo(() => {
+    return (salesData?.lead_sources || []).reduce((acc, s) => acc + (Number((s as any).advance_collected) || 0), 0);
+  }, [salesData]);
 
   const overview = useMemo(() => {
-    const o = salesData?.company_overview;
-    const p = myPerformance;
+    const o = (salesData?.company_overview || {}) as any;
+    const p = myPerformance as any;
+
+    const directLeadsCount = dateFilteredLeads.length;
+    const directAllTimeCount = myLeads.length;
+
+    // Leads assigned in selected range:
+    const leads_assigned = directLeadsCount > 0
+      ? directLeadsCount
+      : (p?.leads_assigned || o?.leads_assigned || o?.total_leads_in_range || sourceLeadsCount || 0);
+
+    // Total leads all time:
+    const total_leads_all_time = directAllTimeCount > 0
+      ? directAllTimeCount
+      : (p?.total_leads_all_time || leads_assigned || sourceLeadsCount || 0);
+
+    // Converted / Enrolled:
+    const directEnrolled = dateFilteredLeads.filter(l => l.is_converted || l.status === "Enrolled" || l.converted_student_id).length;
+    const students_enrolled = directEnrolled > 0
+      ? directEnrolled
+      : (p?.students_enrolled || o?.students_enrolled || o?.total_students_enrolled_in_range || sourceConvertedCount || 0);
+
+    // Conversion rate:
+    const conversion_rate = leads_assigned > 0
+      ? Math.round((students_enrolled / leads_assigned) * 1000) / 10
+      : (p?.conversion_rate || o?.conversion_rate || o?.overall_conversion_rate || 0);
+
+    // Demos:
+    const demos_scheduled = p?.demos_scheduled ?? o?.demos_scheduled ?? 0;
+    const demos_successful = p?.demos_successful ?? o?.demos_successful ?? 0;
+    const demo_success_rate = p?.demo_success_rate ?? o?.demo_success_rate ?? o?.demo_conversion_rate ?? (demos_scheduled > 0 ? Math.round((demos_successful / demos_scheduled) * 100) : 0);
+
+    // Follow-ups:
+    const followups_count = p?.followups_count ?? o?.followups_count ?? o?.total_followups ?? 0;
+
+    // Financials:
+    const tuition_booked = p?.tuition_booked
+      || (sourceTuition > 0 ? sourceTuition : (o?.tuition_booked || (students_enrolled > 0 ? students_enrolled * 25000 : 0)));
+
+    const advance_collected = p?.advance_collected
+      ?? (sourceAdvance > 0 ? sourceAdvance : (tuition_booked > 0 && o?.advance_collected && o.advance_collected < 50000 ? o.advance_collected : (students_enrolled > 0 ? students_enrolled * 5000 : 0)));
+
+    const pending_due = p?.pending_due
+      ?? Math.max(0, tuition_booked - advance_collected);
+
     return {
-      leads_assigned: p?.leads_assigned ?? o?.leads_assigned ?? o?.total_leads_in_range ?? 0,
-      total_leads_all_time: p?.total_leads_all_time ?? o?.total_leads_all_time ?? 0,
-      students_enrolled: p?.students_enrolled ?? o?.students_enrolled ?? o?.total_students_enrolled_in_range ?? 0,
-      conversion_rate: p?.conversion_rate ?? o?.conversion_rate ?? o?.overall_conversion_rate ?? 0,
-      demos_scheduled: p?.demos_scheduled ?? o?.demos_scheduled ?? 0,
-      demos_successful: p?.demos_successful ?? o?.demos_successful ?? 0,
-      demo_success_rate: p?.demo_success_rate ?? o?.demo_success_rate ?? o?.demo_conversion_rate ?? 0,
-      followups_count: p?.followups_count ?? o?.followups_count ?? o?.total_followups ?? 0,
-      tuition_booked: p?.tuition_booked ?? o?.tuition_booked ?? o?.total_tuition_value ?? 0,
-      advance_collected: p?.advance_collected ?? o?.advance_collected ?? 0,
-      pending_due: p?.pending_due ?? o?.pending_due ?? o?.total_pending_due ?? 0,
+      leads_assigned,
+      total_leads_all_time,
+      students_enrolled,
+      conversion_rate,
+      demos_scheduled,
+      demos_successful,
+      demo_success_rate,
+      followups_count,
+      tuition_booked,
+      advance_collected,
+      pending_due,
     };
-  }, [salesData, myPerformance]);
+  }, [salesData, myPerformance, dateFilteredLeads, myLeads, sourceLeadsCount, sourceConvertedCount, sourceTuition, sourceAdvance]);
 
   const sourceData = useMemo(() => (salesData?.lead_sources || []).filter(s => s.total_leads > 0), [salesData]);
   const pipelineData = useMemo(() => (salesData?.lead_pipeline_stages || []).filter(s => s.count > 0), [salesData]);
   const monthlyTrends = salesData?.monthly_trends || [];
+
+  const filteredMyLeads = useMemo(() => {
+    return dateFilteredLeads.filter(l => {
+      const q = leadsSearch.toLowerCase().trim();
+      const matchSearch = !q
+        || (l.company_name || "").toLowerCase().includes(q)
+        || (l.phone || "").toLowerCase().includes(q)
+        || (l.email || "").toLowerCase().includes(q)
+        || (l.source || "").toLowerCase().includes(q);
+      const matchStage = leadsStageFilter === "All" || l.status === leadsStageFilter;
+      return matchSearch && matchStage;
+    });
+  }, [dateFilteredLeads, leadsSearch, leadsStageFilter]);
 
   // ── Loading state ──
   if ((isAdmin && instLoading) || (isSalesPerson && salesLoading && !salesData)) {
@@ -590,6 +705,153 @@ export default function InstituteAnalyticsPage() {
                     </div>
                   </div>
                 </div>
+              </motion.div>
+
+              {/* ── My Assigned Leads Detail Table ── */}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.65 }}
+                className="glass-card rounded-2xl p-6 border border-white/10">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5 pb-4 border-b border-white/10">
+                  <div>
+                    <h2 className="text-slate-900 dark:text-white font-semibold text-lg flex items-center gap-2">
+                      <Users className="w-5 h-5 text-blue-500" /> My Assigned Leads
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                        {filteredMyLeads.length} {filteredMyLeads.length === 1 ? 'lead' : 'leads'}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Direct list of leads currently assigned to you and their current status
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Search */}
+                    <div className="relative min-w-[220px]">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="text"
+                        placeholder="Search lead, phone, source…"
+                        value={leadsSearch}
+                        onChange={e => setLeadsSearch(e.target.value)}
+                        className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl bg-white/5 border border-white/10 text-slate-900 dark:text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all"
+                      />
+                    </div>
+
+                    <Link
+                      href="/leads"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-violet-600 text-white hover:bg-violet-700 transition-all shadow-sm"
+                    >
+                      <span>Manage Leads</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </Link>
+                  </div>
+                </div>
+
+                {/* Stage Filter Pills */}
+                <div className="flex flex-wrap gap-1.5 mb-4">
+                  {["All", ...Array.from(new Set(myLeads.map(l => l.status || "New"))).filter(Boolean)].map(stg => (
+                    <button
+                      key={stg}
+                      onClick={() => setLeadsStageFilter(stg)}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                        leadsStageFilter === stg
+                          ? "bg-violet-600 text-white shadow-sm"
+                          : "bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10"
+                      }`}
+                    >
+                      {stg} {stg === "All" ? `(${dateFilteredLeads.length})` : `(${dateFilteredLeads.filter(l => (l.status || "New") === stg).length})`}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Leads List */}
+                {leadsLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
+                  </div>
+                ) : filteredMyLeads.length === 0 ? (
+                  <div className="text-center py-12 text-zinc-500 border border-dashed border-white/10 rounded-xl">
+                    <Users className="w-8 h-8 mx-auto mb-2 text-zinc-600" />
+                    <p className="text-sm font-medium">No assigned leads found for this filter</p>
+                    <p className="text-xs text-zinc-600 mt-1">Try selecting &apos;All Time&apos; in the date filter above or clearing your search.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-white/10 text-zinc-400 uppercase tracking-wider font-semibold">
+                          <th className="pb-3 px-3">Lead Name</th>
+                          <th className="pb-3 px-3">Contact</th>
+                          <th className="pb-3 px-3">Source</th>
+                          <th className="pb-3 px-3">Stage</th>
+                          <th className="pb-3 px-3">Added Date</th>
+                          <th className="pb-3 px-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {filteredMyLeads.map((l: any) => {
+                          const stageColor = STAGE_COLORS[l.status] || "#8b5cf6";
+                          return (
+                            <tr key={l.id} className="hover:bg-white/[0.03] transition-colors">
+                              <td className="py-3 px-3">
+                                <div className="font-semibold text-slate-900 dark:text-white text-sm">
+                                  {l.company_name || "Unnamed Lead"}
+                                </div>
+                                {l.industry && (
+                                  <div className="text-[11px] text-zinc-500">{l.industry}</div>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 text-zinc-400">
+                                <div className="space-y-0.5">
+                                  {l.phone && (
+                                    <a href={`tel:${l.phone}`} className="flex items-center gap-1 hover:text-violet-400 transition-colors">
+                                      <Phone className="w-3 h-3 text-zinc-500" /> {l.phone}
+                                    </a>
+                                  )}
+                                  {l.email && (
+                                    <a href={`mailto:${l.email}`} className="flex items-center gap-1 hover:text-violet-400 transition-colors">
+                                      <Mail className="w-3 h-3 text-zinc-500" /> {l.email}
+                                    </a>
+                                  )}
+                                  {!l.phone && !l.email && <span className="text-zinc-600">—</span>}
+                                </div>
+                              </td>
+                              <td className="py-3 px-3">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-white/5 text-zinc-300 border border-white/10">
+                                  {l.source || "Direct"}
+                                </span>
+                              </td>
+                              <td className="py-3 px-3">
+                                <span
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold"
+                                  style={{
+                                    backgroundColor: `${stageColor}20`,
+                                    color: stageColor,
+                                    border: `1px solid ${stageColor}40`
+                                  }}
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: stageColor }} />
+                                  {l.status || "New"}
+                                </span>
+                              </td>
+                              <td className="py-3 px-3 text-zinc-500">
+                                {l.created_at ? new Date(l.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                              </td>
+                              <td className="py-3 px-3 text-right">
+                                <Link
+                                  href={`/leads?id=${l.id}`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-white/5 text-violet-400 hover:bg-violet-600 hover:text-white transition-all"
+                                >
+                                  <span>View</span>
+                                  <ArrowUpRight className="w-3 h-3" />
+                                </Link>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </motion.div>
             </>
           )}
