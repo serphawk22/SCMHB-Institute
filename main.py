@@ -6092,7 +6092,10 @@ def reports_summary(
     all_time: Optional[bool] = False,
     session: Session = Depends(get_session),
 ):
-    _require_roles(session, ["Admin", "SuperAdmin", "SalesManager", "Demo"])
+    current_user = _require_roles(session, ["Admin", "SuperAdmin", "SalesManager", "Demo", "Employee"])
+    user_role = _normalize_role(current_user.role)
+    if user_role == "Employee":
+        salesperson_id = current_user.id
     today = datetime.utcnow().date()
     
     is_all_time = bool(all_time or start_date == "all")
@@ -6152,10 +6155,43 @@ def reports_summary(
         leads_in_range = [l for l in leads_in_range if l.course_interest_id == course_id]
         students_in_range = [s for s in students_in_range if s.course_interest_id == course_id]
 
+    rep_student_ids = set()
     if salesperson_id:
         leads_in_range = [l for l in leads_in_range if l.owner_id == salesperson_id]
-        students_in_range = [s for s in students_in_range if s.assigned_salesperson_id == salesperson_id]
-        enrollments_in_range = [e for e in enrollments_in_range if e.enrolled_by == salesperson_id]
+        students_in_range = [
+            s for s in students_in_range
+            if s.assigned_salesperson_id == salesperson_id
+            or (s.lead_id in lead_map and lead_map[s.lead_id].owner_id == salesperson_id)
+        ]
+        rep_student_ids = {
+            s.id for s in all_students
+            if s.assigned_salesperson_id == salesperson_id
+            or (s.lead_id in lead_map and lead_map[s.lead_id].owner_id == salesperson_id)
+        }
+        enrollments_in_range = [
+            e for e in enrollments_in_range
+            if e.enrolled_by == salesperson_id or e.student_id in rep_student_ids
+        ]
+        rep_enrollment_ids = {e.id for e in enrollments_in_range}
+        payments_in_range = [
+            p for p in payments_in_range
+            if p.enrollment_id in rep_enrollment_ids or p.student_id in rep_student_ids
+        ]
+        u_obj = user_map.get(salesperson_id)
+        u_name = u_obj.name.lower() if u_obj and u_obj.name else ""
+        u_email = u_obj.email.lower() if u_obj and u_obj.email else ""
+        calls_in_range = [
+            c for c in calls_in_range
+            if c.assigned_to and (
+                str(salesperson_id) == c.assigned_to
+                or (u_name and u_name in c.assigned_to.lower())
+                or (u_email and u_email in c.assigned_to.lower())
+            )
+        ]
+        meetings_in_range = [m for m in meetings_in_range if m.host_id == salesperson_id]
+        demos_in_range = [d for d in demos_in_range if d.created_by == salesperson_id]
+        notes_in_range = [n for n in notes_in_range if n.author_id == salesperson_id]
+        activities_in_range = [a for a in activities_in_range if a.userId == salesperson_id]
 
     # Financials
     total_tuition_val = round(sum(float(e.total_fee or 0) for e in enrollments_in_range), 2)
@@ -6180,23 +6216,37 @@ def reports_summary(
     overall_conversion_rate = round((len(converted_leads) / len(leads_in_range) * 100), 1) if leads_in_range else 0.0
     total_followups = len(calls_in_range) + len(meetings_in_range) + len(notes_in_range) + len(activities_in_range)
 
+    all_leads_rep = [l for l in all_leads if l.owner_id == salesperson_id] if salesperson_id else all_leads
+    all_students_rep = [s for s in all_students if s.id in rep_student_ids] if salesperson_id else all_students
+    all_enrollments_rep = [
+        e for e in all_enrollments
+        if e.enrolled_by == salesperson_id or e.student_id in rep_student_ids
+    ] if salesperson_id else all_enrollments
+
     # 1. COMPANY OVERVIEW
     company_overview = {
         "total_leads_in_range": len(leads_in_range),
-        "total_leads_all_time": len(all_leads),
+        "total_leads_all_time": len(all_leads_rep),
+        "leads_assigned": len(leads_in_range),
         "total_students_enrolled_in_range": len(enrollments_in_range),
-        "total_students_all_time": len(all_students),
-        "active_students": sum(1 for s in all_students if s.status == "Active"),
+        "students_enrolled": len(enrollments_in_range),
+        "total_students_all_time": len(all_students_rep),
+        "active_students": sum(1 for s in all_students_rep if s.status == "Active"),
         "total_tuition_value": total_tuition_val,
+        "tuition_booked": total_tuition_val,
         "advance_collected": advance_collected,
-        "total_collected_all_time": round(sum(float(e.amount_paid or 0) for e in all_enrollments), 2),
+        "total_collected_all_time": round(sum(float(e.amount_paid or 0) for e in all_enrollments_rep), 2),
         "total_pending_due": total_due,
+        "pending_due": total_due,
         "collection_percentage": collection_percentage,
         "demos_scheduled": demos_scheduled,
         "demos_successful": demos_successful,
         "demo_conversion_rate": demo_conversion_rate,
+        "demo_success_rate": demo_conversion_rate,
         "overall_conversion_rate": overall_conversion_rate,
+        "conversion_rate": overall_conversion_rate,
         "total_followups": total_followups,
+        "followups_count": total_followups,
         "active_batches_count": sum(1 for b in all_batches if b.status in ("Active", "Upcoming")),
         "instructors_count": len(all_instructors),
         "courses_count": len(all_courses),
@@ -6205,18 +6255,21 @@ def reports_summary(
     # 2. SALES PERFORMANCE ("Which sales done what")
     # Identify relevant sales representatives
     sales_rep_ids = set()
-    for l in all_leads:
-        if l.owner_id:
-            sales_rep_ids.add(l.owner_id)
-    for s in all_students:
-        if s.assigned_salesperson_id:
-            sales_rep_ids.add(s.assigned_salesperson_id)
-    for e in all_enrollments:
-        if e.enrolled_by:
-            sales_rep_ids.add(e.enrolled_by)
-    for u in all_users:
-        if u.role in ("Sales", "SalesManager", "Employee", "Demo") or (u.role == "Admin" and any(e.enrolled_by == u.id for e in all_enrollments)):
-            sales_rep_ids.add(u.id)
+    if salesperson_id:
+        sales_rep_ids.add(salesperson_id)
+    else:
+        for l in all_leads:
+            if l.owner_id:
+                sales_rep_ids.add(l.owner_id)
+        for s in all_students:
+            if s.assigned_salesperson_id:
+                sales_rep_ids.add(s.assigned_salesperson_id)
+        for e in all_enrollments:
+            if e.enrolled_by:
+                sales_rep_ids.add(e.enrolled_by)
+        for u in all_users:
+            if u.role in ("Sales", "SalesManager", "Employee", "Demo") or (u.role == "Admin" and any(e.enrolled_by == u.id for e in all_enrollments)):
+                sales_rep_ids.add(u.id)
 
     sales_performance = []
     for uid in sorted(sales_rep_ids):
