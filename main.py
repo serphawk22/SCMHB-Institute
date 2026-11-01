@@ -12500,12 +12500,29 @@ def get_lead_notes(lead_id: int, session: Session = Depends(get_session)):
 class LeadNoteCreate(BaseModel):
     content: str
     author_name: str = "Admin"
+    author_id: Optional[int] = None
     tags: Optional[List[str]] = []
 
 @app.post("/leads/{lead_id}/notes")
 def create_lead_note(lead_id: int, body: LeadNoteCreate, session: Session = Depends(get_session)):
-    note = ClientNote(lead_id=lead_id, content=body.content, author_name=body.author_name, tags=body.tags)
+    author_id = body.author_id or current_salesperson_id.get()
+    now = datetime.utcnow()
+    note = ClientNote(
+        lead_id=lead_id, content=body.content, author_name=body.author_name,
+        author_id=author_id, tags=body.tags, created_at=now,
+    )
     session.add(note)
+    lead = session.get(Lead, lead_id)
+    tenant_id = lead.tenant_id if lead else None
+    act = ActivityLog(
+        tenant_id=tenant_id,
+        userId=author_id,
+        lead_id=lead_id,
+        action="Added Note",
+        details=body.content[:160],
+        createdAt=now,
+    )
+    session.add(act)
     session.commit()
     session.refresh(note)
     return note.dict()
@@ -12520,14 +12537,32 @@ class LeadConversationCreate(BaseModel):
     type: str = "call"
     description: Optional[str] = None
     author_name: str = "Admin"
+    author_id: Optional[int] = None
 
 @app.post("/leads/{lead_id}/conversations")
 def create_lead_conversation(lead_id: int, body: LeadConversationCreate, session: Session = Depends(get_session)):
-    conv = ConversationLog(lead_id=lead_id, title=body.title, type=body.type, description=body.description, author_name=body.author_name)
+    author_id = body.author_id or current_salesperson_id.get()
+    now = datetime.utcnow()
+    conv = ConversationLog(
+        lead_id=lead_id, title=body.title, type=body.type, description=body.description,
+        author_name=body.author_name, author_id=author_id, created_at=now,
+    )
     session.add(conv)
+    lead = session.get(Lead, lead_id)
+    tenant_id = lead.tenant_id if lead else None
+    act = ActivityLog(
+        tenant_id=tenant_id,
+        userId=author_id,
+        lead_id=lead_id,
+        action=f"Logged {body.type.capitalize()}: {body.title}",
+        details=(body.description or body.title)[:160],
+        createdAt=now,
+    )
+    session.add(act)
     session.commit()
     session.refresh(conv)
     return conv.dict()
+
 
 @app.get("/leads/{lead_id}/files")
 def get_lead_files(lead_id: int, session: Session = Depends(get_session)):
@@ -13074,6 +13109,16 @@ def update_lead_stage(lead_id: int, body: LeadStatusRequest, session: Session = 
             wb.updated_at = now
             session.add(wb)
     session.add(lead)
+    now_act = datetime.utcnow()
+    act = ActivityLog(
+        tenant_id=lead.tenant_id,
+        userId=actor.id if actor else None,
+        lead_id=lead_id,
+        action=f"Stage changed to {lead.status}",
+        details=f"Lead moved to {lead.status}",
+        createdAt=now_act,
+    )
+    session.add(act)
     session.commit()
     return {"ok": True, "status": lead.status}
 

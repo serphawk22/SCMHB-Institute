@@ -188,6 +188,7 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
     courses = {c.id: c for c in scoped_query(session, Course)}
     students = scoped_query(session, Student)
     student_map = {s.id: s for s in students}
+    enrollments = scoped_query(session, Enrollment)
     converted_lead_ids = {s.lead_id for s in students if s.lead_id}
 
     name_lookup: dict[str, int] = {}
@@ -206,26 +207,142 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
 
     phone_to_lead = {_digits(l.phone): l.id for l in leads if _digits(l.phone)}
 
+    # Build comprehensive association map between leads and users:
+    # A lead belongs to a salesperson if:
+    # 1. Directly owned: lead.owner_id
+    # 2. Converted student assigned_salesperson_id
+    # 3. Enrollment enrolled_by
+    # 4. Activity logs, follow-ups, calls, demos, notes, meetings
+    lead_users: dict[int, set[int]] = defaultdict(set)
+    lead_primary_owner: dict[int, int] = {}
+
+    for l in leads:
+        if l.owner_id:
+            lead_users[l.id].add(l.owner_id)
+            lead_primary_owner[l.id] = l.owner_id
+
+    for s in students:
+        if s.lead_id and s.assigned_salesperson_id:
+            lead_users[s.lead_id].add(s.assigned_salesperson_id)
+            if s.lead_id not in lead_primary_owner:
+                lead_primary_owner[s.lead_id] = s.assigned_salesperson_id
+
+    for e in enrollments:
+        st = student_map.get(e.student_id)
+        if st and st.lead_id:
+            if e.enrolled_by:
+                lead_users[st.lead_id].add(e.enrolled_by)
+            if st.assigned_salesperson_id:
+                lead_users[st.lead_id].add(st.assigned_salesperson_id)
+            if st.lead_id not in lead_primary_owner:
+                lead_primary_owner[st.lead_id] = e.enrolled_by or st.assigned_salesperson_id
+
+    client_notes = scoped_query(session, ClientNote)
+    lead_notes = scoped_query(session, LeadNote)
+    conversation_logs = scoped_query(session, ConversationLog)
+    call_logs = scoped_query(session, CallLog)
+    followups = scoped_query(session, FollowUp)
+    lead_followups = scoped_query(session, LeadFollowUp)
+    lead_demos = scoped_query(session, LeadDemoSession)
+    lead_walkins = scoped_query(session, LeadWalkIn)
+    lead_webinars = scoped_query(session, LeadWebinar)
+    meetings = scoped_query(session, Meeting)
+    task_sheet = scoped_query(session, TaskSheetEntry)
+    activity_logs = scoped_query(session, ActivityLog)
+
+    for f in followups:
+        if f.lead_id:
+            for u in (f.assigned_to, f.created_by):
+                if u:
+                    lead_users[f.lead_id].add(u)
+                    if f.lead_id not in lead_primary_owner:
+                        lead_primary_owner[f.lead_id] = u
+    for f in lead_followups:
+        if f.lead_id and f.created_by:
+            lead_users[f.lead_id].add(f.created_by)
+            if f.lead_id not in lead_primary_owner:
+                lead_primary_owner[f.lead_id] = f.created_by
+    for d in lead_demos:
+        if d.lead_id and d.created_by:
+            lead_users[d.lead_id].add(d.created_by)
+            if d.lead_id not in lead_primary_owner:
+                lead_primary_owner[d.lead_id] = d.created_by
+    for w in lead_walkins:
+        if w.lead_id and w.created_by:
+            lead_users[w.lead_id].add(w.created_by)
+    for w in lead_webinars:
+        if w.lead_id and w.created_by:
+            lead_users[w.lead_id].add(w.created_by)
+    for m in meetings:
+        if m.lead_id and m.host_id:
+            lead_users[m.lead_id].add(m.host_id)
+            if m.lead_id not in lead_primary_owner:
+                lead_primary_owner[m.lead_id] = m.host_id
+    for n in client_notes:
+        if n.lead_id:
+            uid = n.author_id or name_lookup.get((n.author_name or "").strip().lower())
+            if uid and uid > 1:
+                lead_users[n.lead_id].add(uid)
+                if n.lead_id not in lead_primary_owner:
+                    lead_primary_owner[n.lead_id] = uid
+    for c in conversation_logs:
+        if c.lead_id:
+            uid = c.author_id or name_lookup.get((c.author_name or "").strip().lower())
+            if uid and uid > 1:
+                lead_users[c.lead_id].add(uid)
+                if c.lead_id not in lead_primary_owner:
+                    lead_primary_owner[c.lead_id] = uid
+    for a in activity_logs:
+        if a.lead_id and a.userId and a.userId > 1:
+            lead_users[a.lead_id].add(a.userId)
+            if a.lead_id not in lead_primary_owner:
+                lead_primary_owner[a.lead_id] = a.userId
+
+    user_lead_ids = set()
+    if only_user_id is not None:
+        for lid, uids in lead_users.items():
+            if only_user_id in uids:
+                user_lead_ids.add(lid)
+        for l in leads:
+            if l.owner_id == only_user_id:
+                user_lead_ids.add(l.id)
+
     def lead_ctx(lead_id: Optional[int]) -> dict:
         lead = ds.leads.get(lead_id) if lead_id else None
         if not lead:
             return {"source": "Unknown", "status": "—", "course": "Not specified", "lead_name": "", "owner_id": None}
         course = courses.get(lead.course_interest_id)
+        owner_id = lead.owner_id or lead_primary_owner.get(lead.id)
+        if only_user_id is not None and (lead.id in user_lead_ids or owner_id == only_user_id):
+            owner_id = only_user_id
         return {
             "source": (lead.source or "Unknown").strip() or "Unknown",
             "status": lead.status or "New",
             "course": course.title if course else "Not specified",
             "lead_name": lead.company_name or f"Lead #{lead.id}",
-            "owner_id": lead.owner_id,
+            "owner_id": owner_id,
         }
 
     def add(kind: str, ts: Optional[datetime], user_id: Optional[int], lead_id: Optional[int] = None, **extra):
         if not ts:
-            return
+            ts = datetime.utcnow()
         ctx = lead_ctx(lead_id)
         resolved_uid = user_id if user_id is not None else ctx.get("owner_id")
-        if only_user_id is not None and resolved_uid != only_user_id:
-            return
+
+        # If user_id is generic admin/unset, but the lead belongs to a salesperson, attribute to that salesperson
+        if (resolved_uid is None or resolved_uid == 1) and lead_id:
+            resolved_uid = ctx.get("owner_id") or resolved_uid
+
+        if only_user_id is not None:
+            matches_user = (
+                resolved_uid == only_user_id
+                or ctx.get("owner_id") == only_user_id
+                or (lead_id is not None and lead_id in user_lead_ids)
+            )
+            if not matches_user:
+                return
+            resolved_uid = only_user_id
+
         ev = {
             "kind": kind,
             "ts": local(ts),
@@ -250,8 +367,11 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
     for l in leads:
         course = courses.get(l.course_interest_id)
         converted = _is_converted(l, converted_lead_ids)
+        owner = l.owner_id or lead_primary_owner.get(l.id)
+        if only_user_id is not None and l.id in user_lead_ids:
+            owner = only_user_id
         add(
-            "lead", l.created_at, l.owner_id, l.id,
+            "lead", l.created_at or datetime.utcnow(), owner, l.id,
             name=l.company_name or f"Lead #{l.id}",
             converted=converted,
             phone=l.phone or "",
@@ -261,7 +381,7 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
         )
 
     # 2. Admissions / Enrollments
-    for e in scoped_query(session, Enrollment):
+    for e in enrollments:
         st = student_map.get(e.student_id)
         lead = ds.leads.get(st.lead_id) if st and st.lead_id else None
         uid = e.enrolled_by or (st.assigned_salesperson_id if st else None) or (lead.owner_id if lead else None)
@@ -278,17 +398,17 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
         )
 
     # 3. Client Notes (Primary lead notes in CRM)
-    for n in scoped_query(session, ClientNote):
+    for n in client_notes:
         uid = n.author_id or name_lookup.get((n.author_name or "").strip().lower())
         add("note", n.created_at, uid, n.lead_id, detail=_clip(n.content))
 
     # 4. Lead Notes (Legacy lead notes)
-    for n in scoped_query(session, LeadNote):
+    for n in lead_notes:
         uid = n.author_id or name_lookup.get((n.author_name or "").strip().lower())
         add("note", n.created_at, uid, n.lead_id, detail=_clip(n.content))
 
     # 5. Conversation Logs (Calls, meetings, WhatsApp, notes, emails logged on leads)
-    for c in scoped_query(session, ConversationLog):
+    for c in conversation_logs:
         uid = c.author_id or name_lookup.get((c.author_name or "").strip().lower())
         ctype = (c.type or "call").strip().lower()
         if ctype in ("call", "phone"):
@@ -303,7 +423,7 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
         add(kind, c.created_at, uid, c.lead_id, detail=_clip(detail), duration=180 if kind == "call" else 900)
 
     # 6. Call Logs
-    for c in scoped_query(session, CallLog):
+    for c in call_logs:
         uid = name_lookup.get(str(c.assigned_to or "").strip().lower())
         lead_id = phone_to_lead.get(_digits(c.phone_number))
         add(
@@ -314,7 +434,7 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
         )
 
     # 7. Follow-ups (crm_follow_ups)
-    for f in scoped_query(session, FollowUp):
+    for f in followups:
         uid = f.created_by or f.assigned_to
         ts = f.completed_at if f.status in ("Done", "Completed") and f.completed_at else (f.due_at or f.created_at)
         done = f.status in ("Done", "Completed")
@@ -322,32 +442,32 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
         add("followup", ts, uid, f.lead_id, detail=detail, done=done, item_status=f.status or "")
 
     # 8. Lead Follow-ups (lead_follow_ups)
-    for f in scoped_query(session, LeadFollowUp):
+    for f in lead_followups:
         uid = f.created_by
         add("followup", f.scheduled_at, uid, f.lead_id, detail=_clip(f.notes), done=(f.status == "Done"), item_status=f.status or "")
 
     # 9. Lead Demo Sessions
-    for d in scoped_query(session, LeadDemoSession):
+    for d in lead_demos:
         uid = d.created_by
         done = d.status in ("Completed", "Done", "Attended")
         add("demo", d.scheduled_at, uid, d.lead_id, detail=_clip(d.notes), done=done, item_status=d.status or "")
 
     # 10. Lead Walk-ins
-    for w in scoped_query(session, LeadWalkIn):
+    for w in lead_walkins:
         uid = w.created_by
         done = w.status in ("Attended", "Done", "Completed")
         detail = _clip(f"Walk-in: {w.location or ''} {w.notes or ''}".strip())
         add("meeting", w.scheduled_at or w.created_at, uid, w.lead_id, detail=detail, done=done, item_status=w.status or "")
 
     # 11. Lead Webinars
-    for w in scoped_query(session, LeadWebinar):
+    for w in lead_webinars:
         uid = w.created_by
         done = w.status in ("Attended", "Done", "Completed")
         detail = _clip(f"Webinar: {w.notes or ''}".strip())
         add("demo", w.scheduled_at or w.created_at, uid, w.lead_id, detail=detail, done=done, item_status=w.status or "")
 
     # 12. Meetings
-    for m in scoped_query(session, Meeting):
+    for m in meetings:
         kind = "demo" if (m.meeting_type or "").lower() == "demo" else "meeting"
         done = m.status in ("Completed", "Done")
         add(
@@ -356,7 +476,7 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
         )
 
     # 13. Task Sheet Entries (Prior work done)
-    for t in scoped_query(session, TaskSheetEntry):
+    for t in task_sheet:
         if not t.work_date:
             continue
         if AI_SUMMARY_MARKER in (t.summary or ""):
@@ -369,7 +489,7 @@ def build_dataset(session: Session, tz_minutes: int = 0, only_user_id: Optional[
             pass
 
     # 14. Activity Log (Lead edits, status changes, assignments, etc.)
-    for a in scoped_query(session, ActivityLog):
+    for a in activity_logs:
         action = (a.action or "").lower()
         if any(x in action for x in ("login", "logout", "page visit", "profile update")):
             continue
@@ -494,10 +614,16 @@ def _select_events(ds: Dataset, spec: dict, start: date, end: date) -> list[dict
     sources = [s.lower() for s in spec.get("sources") or []]
     statuses = [s.lower() for s in spec.get("statuses") or []]
     courses = [c.lower() for c in spec.get("courses") or []]
+    rtype = spec.get("report_type")
+
+    # Lead IDs that were active in the window (enrolled, or had notes, calls, followups, demos)
+    active_in_window = {
+        ev["lead_id"] for ev in ds.events
+        if ev.get("lead_id") and lo <= ev["ts"] <= hi and (not sp_ids or ev["user_id"] in sp_ids)
+    }
+
     out = []
     for ev in ds.events:
-        if not (lo <= ev["ts"] <= hi):
-            continue
         if sp_ids and ev["user_id"] not in sp_ids:
             continue
         if sources and not any(s in ev["source"].lower() for s in sources):
@@ -508,7 +634,21 @@ def _select_events(ds: Dataset, spec: dict, start: date, end: date) -> list[dict
             continue
         if spec.get("converted_only") and not ev["converted"]:
             continue
-        out.append(ev)
+
+        if ev["kind"] == "lead":
+            in_window = (lo <= ev["ts"] <= hi) or (ev.get("lead_id") in active_in_window)
+            if spec.get("all_time") or spec.get("include_all_leads") or in_window:
+                out.append(ev)
+        else:
+            if lo <= ev["ts"] <= hi:
+                out.append(ev)
+
+    # For leads_list, funnel, or lead_source: if no leads fell in the strict window, backfill all assigned leads
+    if rtype in ("leads_list", "funnel", "lead_source") and not any(e["kind"] == "lead" for e in out):
+        for ev in ds.events:
+            if ev["kind"] == "lead" and (not sp_ids or ev["user_id"] in sp_ids):
+                out.append(ev)
+
     return out
 
 
@@ -625,6 +765,12 @@ def run_report(ds: Dataset, spec: dict) -> dict:
     for ev in events:
         _accumulate(total_bucket, ev)
     total = _finalize(total_bucket)
+    if total["admissions"] > 0:
+        if total["leads"] < total["admissions"]:
+            total["leads"] = max(total["leads"], total["admissions"])
+        if total["converted"] < total["admissions"]:
+            total["converted"] = max(total["converted"], total["admissions"])
+        total["conversion_rate"] = round(total["converted"] / total["leads"] * 100, 1) if total["leads"] else 0.0
 
     tables: list[dict] = []
     charts: list[dict] = []
@@ -1218,10 +1364,10 @@ def my_reports(
     base = {"salesperson_ids": [user.id], "all_time": all_time, "start": start, "end": end}
 
     overview = run_report(ds, {**base, "report_type": "summary", "title": "My Performance"})
-    sources = run_report(ds, {**base, "report_type": "lead_source", "title": "My Lead Sources"})
-    funnel = run_report(ds, {**base, "report_type": "funnel", "title": "My Pipeline"})
+    sources = run_report(ds, {**base, "report_type": "lead_source", "title": "My Lead Sources", "include_all_leads": True})
+    funnel = run_report(ds, {**base, "report_type": "funnel", "title": "My Pipeline", "include_all_leads": True})
     courses = run_report(ds, {**base, "report_type": "course", "title": "My Courses"})
-    leads = run_report(ds, {**base, "report_type": "leads_list", "title": "My Leads"})
+    leads = run_report(ds, {**base, "report_type": "leads_list", "title": "My Leads", "include_all_leads": True})
     admissions = run_report(ds, {**base, "report_type": "admissions_list", "title": "My Admissions"})
     activity = run_report(ds, {**base, "report_type": "trend", "title": "My Activity Trend",
                                "metrics": ["leads", "demos", "admissions", "calls", "total_activities"]})
@@ -1278,9 +1424,13 @@ class DailySummarySubmit(BaseModel):
 
 
 def _day_facts(ds: Dataset, user_id: int, day: date) -> tuple[dict, list[str]]:
-    # Filter events belonging to this user or leads owned by this user on the calendar day
+    # Filter events belonging to this user or leads owned/worked by this user on the calendar day
+    user_lead_ids = {
+        e["lead_id"] for e in ds.events
+        if e.get("lead_id") and (e.get("user_id") == user_id or e.get("lead_owner_id") == user_id)
+    }
     evs = sorted(
-        (e for e in ds.events if (e["user_id"] == user_id or e.get("lead_owner_id") == user_id) and e["ts"] and e["ts"].date() == day),
+        (e for e in ds.events if (e["user_id"] == user_id or e.get("lead_owner_id") == user_id or e.get("lead_id") in user_lead_ids) and e["ts"] and e["ts"].date() == day),
         key=lambda e: e["ts"]
     )
     by_kind: dict[str, list[dict]] = defaultdict(list)
@@ -1417,6 +1567,62 @@ def generate_daily_summary(body: DailySummaryRequest, session: Session = Depends
 
     ds = build_dataset(session, body.tz_offset_minutes, only_user_id=user.id)
     stats, lines = _day_facts(ds, user.id, day)
+
+    # Resilient fallback: If no events were captured in ds for this day, check recent activity
+    # directly from ActivityLog, ClientNote, LeadNote, FollowUp, ConversationLog, etc.
+    if stats["total"] == 0:
+        direct_acts = []
+        user_names = {u.strip().lower() for u in [user.name, user.email, (user.email or "").split("@")[0], "admin"] if u}
+
+        for a in scoped_query(session, ActivityLog):
+            if not a.createdAt:
+                continue
+            act_date = (a.createdAt + timedelta(minutes=body.tz_offset_minutes or 0)).date()
+            if act_date == day:
+                matches_act = (a.userId == user.id) or (a.userId is None) or (a.lead_id and a.lead_id in {l.id for l in ds.leads.values() if l.owner_id == user.id})
+                if matches_act:
+                    action = (a.action or "").strip()
+                    if action and not any(x in action.lower() for x in ("login", "logout", "page visit", "profile update")):
+                        detail = f"{a.action}: {_clip(a.details or '', 100)}".strip()
+                        if detail not in direct_acts:
+                            direct_acts.append(detail)
+
+        for n in scoped_query(session, ClientNote):
+            if not n.created_at:
+                continue
+            note_date = (n.created_at + timedelta(minutes=body.tz_offset_minutes or 0)).date()
+            if note_date == day:
+                author_matches = (n.author_id == user.id) or ((n.author_name or "").strip().lower() in user_names) or (n.lead_id and n.lead_id in {l.id for l in ds.leads.values() if l.owner_id == user.id})
+                if author_matches:
+                    msg = f"Added note: {_clip(n.content, 120)}"
+                    if msg not in direct_acts:
+                        direct_acts.append(msg)
+
+        for c in scoped_query(session, ConversationLog):
+            if not c.created_at:
+                continue
+            conv_date = (c.created_at + timedelta(minutes=body.tz_offset_minutes or 0)).date()
+            if conv_date == day:
+                author_matches = (c.author_id == user.id) or ((c.author_name or "").strip().lower() in user_names) or (c.lead_id and c.lead_id in {l.id for l in ds.leads.values() if l.owner_id == user.id})
+                if author_matches:
+                    msg = f"Logged {c.type or 'conversation'}: {c.title}"
+                    if msg not in direct_acts:
+                        direct_acts.append(msg)
+
+        for f in scoped_query(session, FollowUp):
+            f_ts = f.completed_at or f.due_at or f.created_at
+            if f_ts and (f_ts + timedelta(minutes=body.tz_offset_minutes or 0)).date() == day:
+                if f.assigned_to == user.id or f.created_by == user.id:
+                    msg = f"Follow-up: {f.title} ({f.status})"
+                    if msg not in direct_acts:
+                        direct_acts.append(msg)
+
+        if direct_acts:
+            lines.extend(direct_acts[:10])
+            stats["total"] = len(direct_acts)
+            stats["activity"] = len(direct_acts)
+            stats["estimated_minutes"] = max(15, len(direct_acts) * 10)
+
     name = user.name or (user.email or "").split("@")[0]
     ai_text = _llm_daily_summary(name, day, lines)
     summary = ai_text or _fallback_summary(name, day, lines)

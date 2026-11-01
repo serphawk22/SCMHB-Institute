@@ -204,14 +204,26 @@ export default function LeadsPage() {
     }
   }, []);
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    return {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(user?.id ? { "X-User-ID": String(user.id) } : {}),
+      ...(user?.tenant_id ? { "X-Tenant-ID": String(user.tenant_id) } : {}),
+    };
+  };
+
   const fetchLeads = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
       const url = new URL(`${API_BASE_URL}/leads`);
-      if ((role === 'SalesManager' || role === 'Employee') && user?.id) {
+      const isSales = role === 'SalesManager' || role === 'Employee' || (Boolean(role) && String(role).toLowerCase().includes('sale'));
+      if (isSales && user?.id) {
         url.searchParams.append('owner_id', String(user.id));
       }
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) setLeads((await res.json()).leads || []);
     } catch (e) {
       console.error("Failed to fetch leads", e);
@@ -277,7 +289,8 @@ export default function LeadsPage() {
     setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, status: target } : l));
     try {
       const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/status`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ status: target }),
       });
       if (!res.ok) throw new Error(await apiError(res, "Could not update the stage."));
@@ -296,7 +309,8 @@ export default function LeadsPage() {
     setLeads(prev => prev.map(l => l.id === lead.id ? { ...l, owner_id: employeeId, owner_name: person?.name || l.owner_name } : l));
     try {
       const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/assign-employee`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ employee_id: employeeId }),
       });
       if (!res.ok) throw new Error(await apiError(res, "Could not assign the sales person."));
@@ -317,7 +331,8 @@ export default function LeadsPage() {
     if (isWalkIn) body.location = p.location || "Campus Front Desk";
     if (!isWebinar && !isWalkIn) body.tz_offset = new Date().getTimezoneOffset(); // the time is this browser's local time
     const res = await fetch(`${API_BASE_URL}/leads/${lead.id}/${endpoint}`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(await apiError(res, "Could not save the schedule."));

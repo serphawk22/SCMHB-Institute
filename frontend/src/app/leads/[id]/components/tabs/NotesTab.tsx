@@ -197,7 +197,17 @@ export default function NotesTab({ leadId, notes, onRefresh }: NotesTabProps) {
   const [isPinned, setIsPinned] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState('');
-  const [authorName, setAuthorName] = useState('Admin');
+  const [authorName, setAuthorName] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const u = JSON.parse(localStorage.getItem('crm_user') || localStorage.getItem('user') || '{}');
+        return u.name || u.email || 'Admin';
+      } catch {
+        return 'Admin';
+      }
+    }
+    return 'Admin';
+  });
 
   const addTag = () => {
     const t = tagInput.replace(/^#/, '').trim();
@@ -208,10 +218,25 @@ export default function NotesTab({ leadId, notes, onRefresh }: NotesTabProps) {
   const handleSubmit = async () => {
     if (!content.trim()) return;
     setSubmitting(true);
+    let userId: number | undefined;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const authHeaders: Record<string, string> = {};
+    if (typeof window !== 'undefined') {
+      try {
+        const u = JSON.parse(localStorage.getItem('crm_user') || localStorage.getItem('user') || '{}');
+        if (u.id) {
+          userId = Number(u.id);
+          authHeaders['X-User-ID'] = String(u.id);
+        }
+        if (u.tenant_id) authHeaders['X-Tenant-ID'] = String(u.tenant_id);
+      } catch {}
+    }
+    if (token) authHeaders['Authorization'] = `Bearer ${token}`;
+
     await fetch(`${API_BASE_URL}/leads/${leadId}/notes`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, tags, is_pinned: isPinned, author_name: authorName }),
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ content, tags, is_pinned: isPinned, author_name: authorName, author_id: userId }),
     });
     setContent('');
     setTags([]);
