@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox
+  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox, Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -42,7 +42,7 @@ export const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
-  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox, Sparkles
 };
 
 // Roles shown the Inbox item (the "Student Leads" roles). routers/inbox.py enforces access server-side and
@@ -107,6 +107,7 @@ export const defaultSidebarSections = [
     items: [
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
       { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
+      { id: "item-my-reports", name: "My Reports", icon: "Activity", href: "/my-reports", roles: ["Admin", "SalesManager", "Employee", "Intern", "Demo"] },
       { id: "item-institute-analytics", name: "My Analytics", icon: "PieChart", href: "/institute-analytics", roles: ["Admin", "SalesManager", "Employee", "Demo"] },
       { id: "item-calls", name: "Calls", icon: "Phone", href: "/calls", roles: ["Admin", "SalesManager", "Demo"] },
     ],
@@ -123,6 +124,7 @@ export const defaultSidebarSections = [
     id: "section-ai-agents",
     heading: "AI AGENTS",
     items: [
+      { id: "item-ai-reports", name: "AI Reports", icon: "Sparkles", href: "/ai-reports", roles: ["Admin", "SalesManager", "Demo"] },
       { id: "item-email-agent", name: "Email Agent", icon: "Mail", href: "/email-agent", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
     ],
   },

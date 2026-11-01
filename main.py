@@ -548,6 +548,9 @@ app.include_router(followups_router)
 from routers.email_campaigns import router as email_campaigns_router
 app.include_router(email_campaigns_router)
 
+from routers.ai_reports import router as ai_reports_router
+app.include_router(ai_reports_router)
+
 
 def _ensure_email_tables(bind=None) -> list:
     """Create the email-stack tables (tracking, inbox, sender profile / integration, follow-ups, campaigns)
