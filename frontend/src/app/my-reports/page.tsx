@@ -94,17 +94,39 @@ export default function MyReportsPage() {
   const [sent, setSent] = useState(false);
   const [sumError, setSumError] = useState("");
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const userStr = typeof window !== "undefined" ? (localStorage.getItem("crm_user") || localStorage.getItem("user")) : null;
+    let userId: string | null = user?.id ? String(user.id) : null;
+    let tenantId: string | null = null;
+    if (userStr) {
+      try {
+        const u = JSON.parse(userStr);
+        if (u?.id) userId = String(u.id);
+        if (u?.tenant_id && u?.role !== "SuperAdmin") tenantId = String(u.tenant_id);
+      } catch {}
+    }
+    return {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(userId ? { "X-User-ID": userId } : {}),
+      ...(tenantId ? { "X-Tenant-ID": tenantId } : {}),
+    };
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
       const p = new URLSearchParams({ tz_offset_minutes: String(tzOffset()) });
+      if (user?.id) p.set("user_id", String(user.id));
       if (allTime) p.set("all_time", "true");
       else {
         p.set("start_date", startDate);
         p.set("end_date", endDate);
       }
-      const res = await fetch(`${API_BASE_URL}/my-reports?${p.toString()}`);
+      const res = await fetch(`${API_BASE_URL}/my-reports?${p.toString()}`, {
+        headers: getAuthHeaders(),
+      });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.detail || json.message || "Failed to load your reports");
       setData(json);
@@ -113,7 +135,7 @@ export default function MyReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, allTime]);
+  }, [startDate, endDate, allTime, user]);
 
   useEffect(() => {
     load();
@@ -141,8 +163,13 @@ export default function MyReportsPage() {
     try {
       const res = await fetch(`${API_BASE_URL}/my-reports/daily-summary`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ work_date: workDate, tz_offset_minutes: tzOffset(), submit }),
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          work_date: workDate,
+          tz_offset_minutes: tzOffset(),
+          submit,
+          user_id: user?.id,
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.detail || json.message || "Could not generate the summary");
@@ -164,12 +191,13 @@ export default function MyReportsPage() {
     try {
       const res = await fetch(`${API_BASE_URL}/my-reports/daily-summary/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           work_date: summary.work_date,
           summary: draft,
           proof_of_work: summary.proof_of_work,
           time_spent_minutes: summary.time_spent_minutes,
+          user_id: user?.id,
         }),
       });
       const json = await res.json().catch(() => ({}));

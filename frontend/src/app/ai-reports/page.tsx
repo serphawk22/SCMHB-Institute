@@ -36,7 +36,7 @@ const FALLBACK_EXAMPLES = [
 ];
 
 export default function AIReportsPage() {
-  const { role } = useRole();
+  const { role, user } = useRole();
   const allowed = ["Admin", "SuperAdmin", "SalesManager", "Demo"].includes(role);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
@@ -47,15 +47,38 @@ export default function AIReportsPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const userStr = typeof window !== "undefined" ? (localStorage.getItem("crm_user") || localStorage.getItem("user")) : null;
+    let userId: string | null = user?.id ? String(user.id) : null;
+    let tenantId: string | null = null;
+    if (userStr) {
+      try {
+        const u = JSON.parse(userStr);
+        if (u?.id) userId = String(u.id);
+        if (u?.tenant_id && u?.role !== "SuperAdmin") tenantId = String(u.tenant_id);
+      } catch {}
+    }
+    return {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(userId ? { "X-User-ID": userId } : {}),
+      ...(tenantId ? { "X-Tenant-ID": tenantId } : {}),
+    };
+  };
+
   useEffect(() => {
     try {
       setHistory(JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"));
     } catch {}
-    fetch(`${API_BASE_URL}/ai-reports/context`)
+    const p = new URLSearchParams();
+    if (user?.id) p.set("user_id", String(user.id));
+    fetch(`${API_BASE_URL}/ai-reports/context?${p.toString()}`, {
+      headers: getAuthHeaders(),
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setCtx(d))
       .catch(() => {});
-  }, []);
+  }, [user]);
 
   const remember = (p: string) => {
     const next = [p, ...history.filter((h) => h !== p)].slice(0, 8);
@@ -75,8 +98,12 @@ export default function AIReportsPage() {
       try {
         const res = await fetch(`${API_BASE_URL}/ai-reports/query`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt: q, tz_offset_minutes: -new Date().getTimezoneOffset() }),
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({
+            prompt: q,
+            tz_offset_minutes: -new Date().getTimezoneOffset(),
+            user_id: user?.id,
+          }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.detail || data.message || "Could not generate the report");
@@ -90,7 +117,7 @@ export default function AIReportsPage() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [prompt, loading, history]
+    [prompt, loading, history, user]
   );
 
   const examples = (ctx?.examples?.length ? ctx.examples : FALLBACK_EXAMPLES).slice(0, 8);
