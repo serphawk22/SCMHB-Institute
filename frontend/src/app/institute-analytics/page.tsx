@@ -131,9 +131,21 @@ export default function InstituteAnalyticsPage() {
   const isAdmin = role === "Admin" || role === "SuperAdmin" || role === "Demo";
   const isSalesPerson = role === "Employee" || role === "SalesManager";
 
+  if (!isAdmin) {
+    return (
+      <div className="mx-auto max-w-[1400px] py-20 text-center">
+        <div className="mx-auto max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+          <AlertCircle className="mx-auto h-8 w-8 mb-2" />
+          <h2 className="text-base font-bold">Access Restricted</h2>
+          <p className="mt-1 text-xs opacity-80">Analytics is restricted to Administrators.</p>
+        </div>
+      </div>
+    );
+  }
+
   // ── Institute-level data (admin) ──
   const [instData, setInstData] = useState<InstituteData | null>(null);
-  const [instLoading, setInstLoading] = useState(isAdmin);
+  const [instLoading, setInstLoading] = useState<boolean>(true);
 
   // ── Personal sales data ──
   const [salesData, setSalesData] = useState<SalesReport | null>(null);

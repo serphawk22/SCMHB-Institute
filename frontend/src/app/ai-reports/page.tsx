@@ -37,7 +37,7 @@ const FALLBACK_EXAMPLES = [
 
 export default function AIReportsPage() {
   const { role, user } = useRole();
-  const allowed = ["Admin", "SuperAdmin", "SalesManager", "Demo"].includes(role);
+  const allowed = ["Admin", "SuperAdmin", "Demo"].includes(role);
   const [prompt, setPrompt] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -124,14 +124,20 @@ export default function AIReportsPage() {
   const personChips = (ctx?.salespeople || []).slice(0, 4).map((n) => `Performance of ${n} this month`);
   const sourceChips = (ctx?.sources || []).slice(0, 2).map((s) => `Leads and conversions from ${s} in the last 30 days`);
 
+  if (!allowed) {
+    return (
+      <div className="mx-auto max-w-[1400px] py-20 text-center">
+        <div className="mx-auto max-w-md rounded-2xl border border-amber-200 bg-amber-50 p-6 text-sm font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
+          <AlertCircle className="mx-auto h-8 w-8 mb-2" />
+          <h2 className="text-base font-bold">Access Restricted</h2>
+          <p className="mt-1 text-xs opacity-80">AI Reports is available to Administrators.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-[1400px] space-y-6 pb-16">
-      {!allowed && (
-        <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300">
-          <AlertCircle className="h-5 w-5 shrink-0" />
-          AI Reports is available to Admins and Sales Managers. Open <a href="/my-reports" className="underline">My Reports</a> to see your own numbers.
-        </div>
-      )}
       {/* Hero / prompt */}
       <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950 p-6 shadow-xl dark:border-zinc-800 sm:p-9">
         <div className="pointer-events-none absolute -right-16 -top-20 h-72 w-72 rounded-full bg-emerald-500/20 blur-3xl" />
