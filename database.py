@@ -20,9 +20,13 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-# Database URL from environment
-# Database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///database.db")
+# Pinned Neon PostgreSQL Database URL
+PINNED_DATABASE_URL = "postgresql://neondb_owner:npg_J2xABRGuH0bY@ep-square-darkness-b4fxb99v-pooler.c-6.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+env_db_url = os.getenv("DATABASE_URL")
+if env_db_url and "ep-square-darkness-b4fxb99v" in env_db_url:
+    DATABASE_URL = env_db_url
+else:
+    DATABASE_URL = PINNED_DATABASE_URL
 
 # Windows compatibility fix for psycopg2 and Neon SSL DLLs
 if DATABASE_URL and DATABASE_URL.startswith("postgresql://"):
