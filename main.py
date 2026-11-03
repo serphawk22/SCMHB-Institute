@@ -8124,7 +8124,6 @@ def dashboard_stats(
     all_quotes = session.exec(select(CRMQuote).where(CRMQuote.created_at >= six_months_ago)).all()
     all_sales_orders = session.exec(select(SalesOrder)).all()
     all_purchase_orders = session.exec(select(PurchaseOrder)).all()
-    all_service_reqs = session.exec(select(ServiceRequest).where(ServiceRequest.created_at >= six_months_ago)).all()
 
     def _billing_value(row):
         return getattr(row, "grand_total", None) or getattr(row, "total", None) or 0
