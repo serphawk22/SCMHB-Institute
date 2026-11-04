@@ -921,27 +921,7 @@ def on_startup():
     except Exception as e:
         print("tenant call limits already exist or error:", e)
 
-# Keep the Neon serverless DB awake + pool warm. Without this, the first
-    # requests after ~5min of idle trigger a slow cold-start (~5-7s each).
-    try:
-        import threading as _threading
-        from database import engine as _keepalive_engine
-
-        def _db_keepalive_loop():
-            import time as _time
-            from sqlalchemy import text as _text
-            while True:
-                _time.sleep(60)
-                try:
-                    with _keepalive_engine.connect() as _conn:
-                        _conn.execute(_text("SELECT 1"))
-                except Exception as _e:
-                    print("Keepalive ping failed:", _e)
-
-        _threading.Thread(target=_db_keepalive_loop, daemon=True, name="db-keepalive").start()
-        print("DB keepalive started (pings every 60s).")
-    except Exception as e:
-        print("Could not start DB keepalive:", e)
+# DB keepalive removed: Neon compute is billed per active connection; on-demand cold-starts are acceptable.
 
     try:
         with engine.connect() as conn:
@@ -12121,6 +12101,38 @@ def get_leads(owner_id: Optional[int] = None, session: Session = Depends(get_ses
             _next_walkin.setdefault(wk.lead_id, wk.scheduled_at.isoformat())
         for wb in session.exec(select(LeadWebinar).where(LeadWebinar.lead_id.in_(_lead_ids), LeadWebinar.status == "Scheduled").order_by(LeadWebinar.scheduled_at)).all():
             _next_webinar.setdefault(wb.lead_id, wb.scheduled_at.isoformat())
+    # Batch-load courses to avoid per-lead N+1
+    _course_ids = list({l.course_interest_id for l in leads if l.course_interest_id})
+    _course_map = {}
+    if _course_ids:
+        _course_map = {c.id: c for c in session.exec(select(Course).where(Course.id.in_(_course_ids))).all()}
+    # Batch-load converted students (by converted_student_id OR lead_id)
+    _conv_ids = list({l.converted_student_id for l in leads if l.converted_student_id})
+    _students_by_id: dict = {}
+    _students_by_lead: dict = {}
+    if _conv_ids:
+        for s in session.exec(select(Student).where(Student.id.in_(_conv_ids))).all():
+            _students_by_id[s.id] = s
+    _remaining_lead_ids = [l.id for l in leads if not l.converted_student_id]
+    if _remaining_lead_ids:
+        for s in session.exec(select(Student).where(Student.lead_id.in_(_remaining_lead_ids))).all():
+            _students_by_lead[s.lead_id] = s
+    # Batch-load latest enrollment per converted student
+    _all_student_ids = list({s.id for s in list(_students_by_id.values()) + list(_students_by_lead.values())})
+    _enroll_map: dict = {}
+    _enroll_course_ids = set()
+    if _all_student_ids:
+        for e in session.exec(
+            select(Enrollment).where(Enrollment.student_id.in_(_all_student_ids))
+            .order_by(Enrollment.enrollment_date.desc())
+        ).all():
+            _enroll_map.setdefault(e.student_id, e)
+            if e.course_id:
+                _enroll_course_ids.add(e.course_id)
+    _enroll_courses = {}
+    if _enroll_course_ids:
+        _enroll_courses = {c.id: c for c in session.exec(select(Course).where(Course.id.in_(_enroll_course_ids))).all()}
+
     for lead in leads:
         lead_item = lead.dict()
         lead_item["owner_name"] = _owner_names.get(lead.owner_id)
@@ -12128,23 +12140,15 @@ def get_leads(owner_id: Optional[int] = None, session: Session = Depends(get_ses
         lead_item["next_demo_at"] = _next_demo.get(lead.id)
         lead_item["next_walkin_at"] = _next_walkin.get(lead.id)
         lead_item["next_webinar_at"] = _next_webinar.get(lead.id) or _next_demo.get(lead.id)
-        if lead.course_interest_id:
-            course = session.get(Course, lead.course_interest_id)
-            if course:
-                lead_item["course_interest_title"] = course.title
-        student = session.get(Student, lead.converted_student_id) if lead.converted_student_id else None
-        if not student:
-            student = session.exec(select(Student).where(Student.lead_id == lead.id)).first()
+        if lead.course_interest_id and lead.course_interest_id in _course_map:
+            lead_item["course_interest_title"] = _course_map[lead.course_interest_id].title
+        student = _students_by_id.get(lead.converted_student_id) if lead.converted_student_id else _students_by_lead.get(lead.id)
         if student:
             lead_item["converted_student_id"] = student.id
             lead_item["is_converted"] = True
-            enrollment = session.exec(
-                select(Enrollment).where(Enrollment.student_id == student.id).order_by(Enrollment.enrollment_date.desc())
-            ).first()
-            if enrollment and enrollment.course_id:
-                c = session.get(Course, enrollment.course_id)
-                if c:
-                    lead_item["enrolled_course_name"] = c.title
+            enrollment = _enroll_map.get(student.id)
+            if enrollment and enrollment.course_id and enrollment.course_id in _enroll_courses:
+                lead_item["enrolled_course_name"] = _enroll_courses[enrollment.course_id].title
             elif student.course_interest:
                 lead_item["enrolled_course_name"] = student.course_interest
         results.append(lead_item)
@@ -20386,20 +20390,47 @@ def get_students(status: Optional[str] = None, q: Optional[str] = None, session:
         query = query.where(or_(Student.name.ilike(f"%{q}%"), Student.email.ilike(f"%{q}%"), Student.phone.ilike(f"%{q}%")))
     students = session.exec(query.order_by(Student.created_at.desc())).all()
     result = []
+    # Batch-load all enrollments for these students in one query
+    _stu_ids = [s.id for s in students]
+    _all_enrollments: dict[int, list] = {s.id: [] for s in students}
+    _batch_ids_needed = set()
+    _course_ids_needed = set()
+    if _stu_ids:
+        for e in session.exec(select(Enrollment).where(Enrollment.student_id.in_(_stu_ids))).all():
+            _all_enrollments.setdefault(e.student_id, []).append(e)
+            if e.batch_id:
+                _batch_ids_needed.add(e.batch_id)
+            if e.course_id:
+                _course_ids_needed.add(e.course_id)
+    _batch_map = {}
+    if _batch_ids_needed:
+        _batch_map = {b.id: b for b in session.exec(select(Batch).where(Batch.id.in_(_batch_ids_needed))).all()}
+    _course_map = {}
+    if _course_ids_needed:
+        _course_map = {c.id: c for c in session.exec(select(Course).where(Course.id.in_(_course_ids_needed))).all()}
+    # Batch-load salesperson mapping (lead_id -> owner_id)
+    _lead_ids_for_stu = [s.lead_id for s in students if s.lead_id]
+    _lead_owner_map = {}
+    if _lead_ids_for_stu:
+        for lead in session.exec(select(Lead).where(Lead.id.in_(_lead_ids_for_stu))).all():
+            _lead_owner_map[lead.id] = lead.owner_id
+
     for s in students:
-        enrollments = session.exec(select(Enrollment).where(Enrollment.student_id == s.id)).all()
+        enrollments = _all_enrollments.get(s.id, [])
         active_enrollment = next((e for e in enrollments if e.status == "Active"), None)
         batch_name = None
         course_title = None
         active_batch_id = None
         active_course_id = None
         if active_enrollment:
-            batch = session.get(Batch, active_enrollment.batch_id)
-            course = session.get(Course, active_enrollment.course_id)
+            batch = _batch_map.get(active_enrollment.batch_id)
+            course = _course_map.get(active_enrollment.course_id)
             batch_name = batch.batch_name if batch else None
             course_title = course.title if course else None
             active_batch_id = batch.id if batch else None
             active_course_id = course.id if course else None
+        # Resolve salesperson without extra DB hit
+        sp_id = s.assigned_salesperson_id or _lead_owner_map.get(s.lead_id)
         result.append({
             "id": s.id, "name": s.name, "email": s.email, "phone": s.phone,
             "user_id": s.user_id, "course_interest": s.course_interest,
@@ -20409,7 +20440,7 @@ def get_students(status: Optional[str] = None, q: Optional[str] = None, session:
             "improvement_plan": s.improvement_plan,
             "address": s.address, "gender": s.gender, "qualification": s.qualification,
             "guardian_name": s.guardian_name, "guardian_phone": s.guardian_phone,
-            "assigned_salesperson_id": _student_salesperson_id(s, session),
+            "assigned_salesperson_id": sp_id,
             "source": s.source, "status": s.status, "photo_url": s.photo_url,
             "enrollment_count": len(enrollments),
             "active_course": course_title, "active_batch": batch_name,
@@ -20744,11 +20775,18 @@ def get_enrollments(batch_id: Optional[int] = None, student_id: Optional[int] = 
     if course_id:
         query = query.where(Enrollment.course_id == course_id)
     enrollments = session.exec(query.order_by(Enrollment.created_at.desc())).all()
+    # Batch-load students, batches, courses in 3 queries instead of 3*N
+    _e_student_ids = list({e.student_id for e in enrollments if e.student_id})
+    _e_batch_ids   = list({e.batch_id   for e in enrollments if e.batch_id})
+    _e_course_ids  = list({e.course_id  for e in enrollments if e.course_id})
+    _e_students = {s.id: s for s in session.exec(select(Student).where(Student.id.in_(_e_student_ids))).all()} if _e_student_ids else {}
+    _e_batches  = {b.id: b for b in session.exec(select(Batch).where(Batch.id.in_(_e_batch_ids))).all()} if _e_batch_ids else {}
+    _e_courses  = {c.id: c for c in session.exec(select(Course).where(Course.id.in_(_e_course_ids))).all()} if _e_course_ids else {}
     result = []
     for e in enrollments:
-        student = session.get(Student, e.student_id)
-        batch = session.get(Batch, e.batch_id)
-        course = session.get(Course, e.course_id)
+        student = _e_students.get(e.student_id)
+        batch   = _e_batches.get(e.batch_id)
+        course  = _e_courses.get(e.course_id)
         result.append({
             "id": e.id, "student_id": e.student_id, "student_name": student.name if student else None,
             "batch_id": e.batch_id, "batch_name": batch.batch_name if batch else None,
