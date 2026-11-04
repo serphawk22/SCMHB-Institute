@@ -156,7 +156,7 @@ export default function InstituteAnalyticsPage() {
   const thirtyAgo = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(thirtyAgo);
   const [endDate, setEndDate] = useState(today);
-  const [isAllTime, setIsAllTime] = useState(false);
+  const [isAllTime, setIsAllTime] = useState(true); // Default All Time so all data is visible
 
   const applyPreset = (p: "today" | "week" | "month" | "all") => {
     setIsAllTime(false);

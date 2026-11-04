@@ -6137,8 +6137,16 @@ def reports_summary(
 
     if salesperson_id:
         leads_in_range = [l for l in leads_in_range if l.owner_id == salesperson_id]
-        students_in_range = [s for s in students_in_range if s.assigned_salesperson_id == salesperson_id]
-        enrollments_in_range = [e for e in enrollments_in_range if e.enrolled_by == salesperson_id]
+        students_in_range = [
+            s for s in students_in_range
+            if s.assigned_salesperson_id == salesperson_id
+            or (s.lead_id and lead_map.get(s.lead_id) and lead_map[s.lead_id].owner_id == salesperson_id)
+        ]
+        sp_student_ids = {s.id for s in students_in_range}
+        enrollments_in_range = [
+            e for e in enrollments_in_range
+            if e.enrolled_by == salesperson_id or e.student_id in sp_student_ids
+        ]
 
     # Financials
     total_tuition_val = round(sum(float(e.total_fee or 0) for e in enrollments_in_range), 2)
@@ -6304,7 +6312,7 @@ def reports_summary(
             "pending_due": 0.0,
         })
         item["total_leads"] += 1
-        if l.status in ("Demo", "Demo Scheduled", "Demo Completed"):
+        if l.status in ("Demo", "Demo Scheduled", "Demo Completed") or any(d.lead_id == l.id for d in demos_in_range):
             item["demos_scheduled"] += 1
         if l.is_converted or l.status == "Enrolled" or l.converted_student_id:
             item["converted_students"] += 1
@@ -6352,18 +6360,37 @@ def reports_summary(
         "Demo Scheduled": 0, "Demo Completed": 0,
         "Enrolled": 0, "Cold": 0, "Lost": 0
     }
+    # Alias map for non-standard statuses saved in DB
+    _stage_alias = {
+        "interested": "Contacted",
+        "follow up": "Follow Up",
+        "followup": "Follow Up",
+        "demo": "Demo Scheduled",
+        "demo scheduled": "Demo Scheduled",
+        "demo completed": "Demo Completed",
+        "enrolled": "Enrolled",
+        "new": "New",
+        "contacted": "Contacted",
+        "cold": "Cold",
+        "lost": "Lost",
+    }
     for l in leads_in_range:
         stg = l.status or "New"
         if l.is_converted or l.converted_student_id:
             stage_counts["Enrolled"] += 1
         elif stg in stage_counts:
             stage_counts[stg] += 1
-        elif "Demo" in stg:
-            stage_counts["Demo Scheduled"] += 1
-        elif "Follow" in stg:
-            stage_counts["Follow Up"] += 1
         else:
-            stage_counts["Contacted"] += 1
+            # Normalize via alias map
+            normalized = _stage_alias.get(stg.lower().strip())
+            if normalized:
+                stage_counts[normalized] += 1
+            elif "demo" in stg.lower():
+                stage_counts["Demo Scheduled"] += 1
+            elif "follow" in stg.lower():
+                stage_counts["Follow Up"] += 1
+            else:
+                stage_counts["Contacted"] += 1
 
     total_pipeline = len(leads_in_range) or 1
     lead_pipeline_stages = [
