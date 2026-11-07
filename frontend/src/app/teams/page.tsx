@@ -107,6 +107,7 @@ export default function TeamsPage() {
   };
 
   const salesTeam = users.filter(u => ['Admin', 'SalesManager', 'Employee'].includes(u.role));
+  const admissionsTeam = users.filter(u => u.role === "Admissions");
 
   if (loading) {
     return (
@@ -178,6 +179,32 @@ export default function TeamsPage() {
       </div>
 
       <section className="space-y-4">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h2 className="flex items-center gap-2 text-xl font-bold text-gray-900 dark:text-zinc-50">
+              <GraduationCap className="h-5 w-5 text-emerald-600" /> Admissions team
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">Team members receive converted students and manage enrollment payments.</p>
+          </div>
+          <span className="text-sm text-gray-500 dark:text-zinc-400">{admissionsTeam.length} members</span>
+        </div>
+        {admissionsTeam.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-gray-300 px-6 py-10 text-center text-sm text-gray-500 dark:border-zinc-700 dark:text-zinc-400">
+            Add three Admissions users with Add Member to start assigning converted students.
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {admissionsTeam.map(member => (
+              <div key={member.id} className="rounded-lg border border-gray-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                <p className="font-semibold text-gray-900 dark:text-white">{member.name || "Unnamed member"}</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-zinc-400">{member.email}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="space-y-4">
         <div className="flex items-end justify-between gap-4"><div><h2 className="flex items-center gap-2 text-xl font-bold text-gray-900 dark:text-zinc-50"><UserCog className="h-5 w-5 text-emerald-700" />Instructor team</h2><p className="mt-1 text-sm text-gray-500 dark:text-zinc-400">Student load, assigned teaching batches, and learner feedback.</p></div><span className="text-sm text-gray-500 dark:text-zinc-400">{instituteTeam.instructors.length} instructors</span></div>
         {instituteTeam.instructors.length === 0 ? <div className="rounded-lg border border-dashed border-gray-300 px-6 py-10 text-center text-sm text-gray-500 dark:border-zinc-700 dark:text-zinc-400">Add instructors in the Instructors section to see their workload here.</div> : <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{instituteTeam.instructors.map(instructor => <button key={instructor.id} type="button" onClick={() => window.location.assign(`/instructors/${instructor.id}`)} className="rounded-lg border border-gray-200 bg-white p-4 text-left transition hover:border-emerald-500 dark:border-zinc-800 dark:bg-zinc-900"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-gray-900 dark:text-white">{instructor.name}</p><p className="mt-1 text-xs text-gray-500 dark:text-zinc-400">{instructor.email || "No email"}</p></div><span className="inline-flex items-center gap-1 text-sm font-semibold text-amber-700 dark:text-amber-300"><Star className="h-3.5 w-3.5 fill-current" />{instructor.avg_rating || "—"}</span></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-gray-100 pt-3 text-center dark:border-zinc-800"><div><p className="font-bold">{instructor.students}</p><p className="text-[10px] text-gray-500">Students</p></div><div><p className="font-bold">{instructor.batches_active}</p><p className="text-[10px] text-gray-500">Active</p></div><div><p className="font-bold">{instructor.batches_upcoming}</p><p className="text-[10px] text-gray-500">Upcoming</p></div><div><p className="font-bold">{instructor.batches_completed}</p><p className="text-[10px] text-gray-500">Past</p></div></div></button>)}</div>}
       </section>
@@ -241,6 +268,7 @@ export default function TeamsPage() {
                   <option value="Admin">Admin</option>
                   <option value="SalesManager">{t("teams.opt_sales_manager")}</option>
                   <option value="Employee">Employee</option>
+                  <option value="Admissions">Admissions</option>
                 </select>
               </div>
 

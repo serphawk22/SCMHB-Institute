@@ -36,6 +36,12 @@ export default function EnrollmentsPage() {
     } catch(e){} finally { setLoading(false); }
   };
   useEffect(()=>{ fetch_(); },[]);
+  useEffect(() => {
+    const studentId = new URLSearchParams(window.location.search).get("student_id");
+    if (!studentId || !Number.isInteger(Number(studentId))) return;
+    setForm(current => ({ ...current, student_id: studentId }));
+    setShowModal(true);
+  }, []);
 
   const onBatchChange = (bid: string) => {
     const batch = batches.find(b=>b.id.toString()===bid);

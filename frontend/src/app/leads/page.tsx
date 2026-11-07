@@ -12,6 +12,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { useLanguage } from "@/context/LanguageContext";
 import SalesAssignModal from "@/components/SalesAssignModal";
 import LeadScheduleModal, { ScheduleType, SchedulePayload } from "@/components/LeadScheduleModal";
+import LeadTransferModal from "@/components/LeadTransferModal";
 
 interface Lead {
   id: number;
@@ -182,12 +183,14 @@ export default function LeadsPage() {
   useEffect(() => { fetchLeads(); }, []);
 
   useEffect(() => {
-    if (!isAdmin) return;
-    fetch(`${API_BASE_URL}/employees/workload`)
+    if (!role) return;
+    fetch(`${API_BASE_URL}/employees/workload`, { headers: getAuthHeaders() })
       .then(r => r.ok ? r.json() : Promise.reject(new Error("Sales team unavailable")))
-      .then(d => setSalesPeople((d.employees || d || []).map((e: any) => ({ id: e.id, name: e.name || e.email }))))
+      .then(d => setSalesPeople((d.employees || d || [])
+        .filter((e: any) => ["SalesManager", "Sales", "Employee"].includes(e.role))
+        .map((e: any) => ({ id: e.id, name: e.name || e.email }))))
       .catch(e => console.warn("Could not load sales team", e));
-  }, [isAdmin]);
+  }, [isAdmin, role]);
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/courses`)
@@ -633,6 +636,20 @@ export default function LeadsPage() {
         </div>
       </div>
 
+      {(isAdmin || role === "SalesManager" || role === "Employee" || role === "Intern" || (role as string) === "Sales") && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-black sm:px-6">
+          <p className="text-sm text-slate-500">Move leads between salespeople with a required reason.</p>
+          <LeadTransferModal
+            leads={leads}
+            salesPeople={salesPeople}
+            isAdmin={isAdmin}
+            userId={user?.id}
+            getAuthHeaders={getAuthHeaders}
+            onTransferred={() => fetchLeads(true)}
+          />
+        </div>
+      )}
+
       <div className="flex flex-1 overflow-hidden">
       {/* Table */}
       <div className="flex-1 min-w-0 overflow-auto bg-white dark:bg-black">
@@ -797,17 +814,14 @@ export default function LeadsPage() {
                       </span>
                     </td>
                     <td className="hidden lg:table-cell px-3 sm:px-5 py-3" onClick={e => e.stopPropagation()}>
-                      {isAdmin ? (
+                      {isAdmin && !lead.owner_id ? (
                         <select
                           aria-label={`Assign sales person for ${lead.company_name}`}
                           value={lead.owner_id ? String(lead.owner_id) : ""}
                           onChange={e => assignOwner(lead, e.target.value)}
                           className="w-full min-w-[140px] max-w-[190px] px-2.5 py-1.5 rounded-lg text-[13px] font-medium bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 cursor-pointer"
                         >
-                          <option value="" disabled>Unassigned</option>
-                          {lead.owner_id && !salesPeople.some(p => p.id === lead.owner_id) && (
-                            <option value={lead.owner_id}>{lead.owner_name || `User #${lead.owner_id}`}</option>
-                          )}
+                          <option value="" disabled>Choose owner</option>
                           {salesPeople.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
                       ) : (

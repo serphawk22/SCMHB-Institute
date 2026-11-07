@@ -1,7 +1,7 @@
 """Comprehensive Seed Script for SerpHawk CRM & Training Institute.
 Seeds a complete, realistic, interconnected dataset with:
 - 1 Tenant & Client Statuses
-- 13 Users (SuperAdmin, Admin, SalesManager, 4 Salesmen, 5 Instructors, 2 Student users)
+- 16 Users (SuperAdmin, Admin, SalesManager, 4 Salesmen, 3 Admissions users, 5 Instructors, 2 Student users)
 - 5 Professional Instructors & Profiles
 - 5 Industry-grade Courses with complete syllabi
 - 8 Batches (Active, Upcoming, Completed)
@@ -114,6 +114,10 @@ def main():
             ("sarah.jenkins@hawktech.edu", "HawkSales!2026", "Sarah Jenkins", "Employee", "+1 555-0122"),
             ("david.kumar@hawktech.edu", "HawkSales!2026", "David Kumar", "Employee", "+1 555-0123"),
             ("emily.watson@hawktech.edu", "HawkSales!2026", "Emily Watson", "Employee", "+1 555-0124"),
+            # Admissions team
+            ("admissions1@hawktech.test", "HawkAdmission!2026", "Admissions Coordinator 1", "Admissions", "+1 555-0141"),
+            ("admissions2@hawktech.test", "HawkAdmission!2026", "Admissions Coordinator 2", "Admissions", "+1 555-0142"),
+            ("admissions3@hawktech.test", "HawkAdmission!2026", "Admissions Coordinator 3", "Admissions", "+1 555-0143"),
             # Instructors
             ("rajesh.sharma@hawktech.edu", "HawkTeach!2026", "Dr. Rajesh Sharma", "Instructor", "+1 555-0131"),
             ("ananya.verma@hawktech.edu", "HawkTeach!2026", "Ananya Verma", "Instructor", "+1 555-0132"),
@@ -160,6 +164,11 @@ def main():
             users["emily.watson@hawktech.edu"],
         ]
         sales_manager = users["marcus.vance@hawktech.edu"]
+        admissions_team = [
+            users["admissions1@hawktech.test"],
+            users["admissions2@hawktech.test"],
+            users["admissions3@hawktech.test"],
+        ]
         print(f"✓ Users seeded: {len(users)} staff, salesmen, instructors, and demo accounts")
 
         # 4. Courses (5 comprehensive courses)
@@ -590,7 +599,7 @@ def main():
             fname = first_names[(idx * 7 + 3) % len(first_names)]
             lname = last_names[(idx * 11 + 5) % len(last_names)]
             full_name = f"{fname} {lname}"
-            
+
             # Special designated demo students
             if idx == 0:
                 full_name = "Asha Patel"
@@ -600,7 +609,7 @@ def main():
                 email = "student2@hawktech.edu"
             else:
                 email = f"{fname.lower()}.{lname.lower()}{lead_counter}@learner.hawktech.test"
-            
+
             used_emails.add(email)
 
             # Assign to course & salesman
@@ -748,6 +757,7 @@ def main():
                 source=lead.source,
                 lead_id=lead.id,
                 assigned_salesperson_id=salesman.id,
+                admissions_assignee_id=admissions_team[s_idx % len(admissions_team)].id,
                 status=st_status,
                 drop_reason=drop_reason,
                 improvement_plan=drop_plan,
@@ -769,7 +779,7 @@ def main():
             # Financials for Enrollment
             total_fee = course.price
             advance_req = course.advance_amount
-            
+
             # Fee payment statuses
             if st_status == "Completed":
                 amount_paid = total_fee
@@ -1052,7 +1062,7 @@ def main():
             lead_idx = m_idx % len(lead_records)
             lead, course, salesman, _, _, _, _, _ = lead_records[lead_idx]
             mtype = meeting_types[m_idx % len(meeting_types)]
-            
+
             # Days offset: past 35 days, today, or next 14 days
             day_offset = (m_idx % 45) - 30
             m_time = now + timedelta(days=day_offset, hours=(m_idx % 8) + 10)
@@ -1104,7 +1114,7 @@ def main():
         for f_idx in range(90):
             lead_idx = f_idx % len(lead_records)
             lead, course, salesman, _, _, _, _, _ = lead_records[lead_idx]
-            
+
             # Distribution of due dates:
             # 30 Overdue (past 1-10 days, Pending)
             # 15 Due Today (Pending)

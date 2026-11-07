@@ -88,6 +88,7 @@ export const defaultSidebarSections = [
       { id: "item-leads", name: "Student Leads", icon: "GraduationCap", href: "/leads", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
       { id: "item-schedule", name: "Important Dates", icon: "CalendarClock", href: "/schedule", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
       { id: "item-lead-sources", name: "Lead Sources", icon: "PieChart", href: "/lead-sources", roles: ["Admin", "SalesManager", "Demo", "Employee"] },
+      { id: "item-admissions", name: "Admissions", icon: "GraduationCap", href: "/admissions", roles: ["Admin", "Admissions", "Demo"] },
     ],
   },
   {
@@ -97,7 +98,7 @@ export const defaultSidebarSections = [
       { id: "item-courses", name: "Course Catalog", icon: "BookOpen", href: "/courses", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
       { id: "item-batches", name: "Batches", icon: "Layers", href: "/batches", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
       { id: "item-students", name: "Students", icon: "GraduationCap", href: "/students", roles: ["Admin", "Demo", "SalesManager", "Employee"] },
-      { id: "item-enrollments", name: "Enrollments & Slips", icon: "FileText", href: "/enrollments", roles: ["Admin", "Demo", "SalesManager"] },
+      { id: "item-enrollments", name: "Enrollments & Slips", icon: "FileText", href: "/enrollments", roles: ["Admin", "Admissions", "Demo", "SalesManager"] },
       { id: "item-instructors", name: "Instructors", icon: "UserCog", href: "/instructors", roles: ["Admin", "Demo"] },
     ],
   },
