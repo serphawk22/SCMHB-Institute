@@ -9,4 +9,4 @@ import os
 
 
 def jobs_enabled() -> bool:
-    return os.getenv("BACKGROUND_JOBS", "1").strip().lower() not in ("0", "false", "no", "off")
+    return os.getenv("BACKGROUND_JOBS", "0").strip().lower() not in ("0", "false", "no", "off")

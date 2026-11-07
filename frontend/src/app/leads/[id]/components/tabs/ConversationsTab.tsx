@@ -48,10 +48,27 @@ function ConversationCard({ conv, leadId, onRefresh }: { conv: any; leadId: any;
   const submitReply = async () => {
     if (!replyText.trim()) return;
     setSubmitting(true);
+    let author = 'Admin';
+    let userId: number | undefined;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const authHeaders: Record<string, string> = {};
+    if (typeof window !== 'undefined') {
+      try {
+        const u = JSON.parse(localStorage.getItem('crm_user') || localStorage.getItem('user') || '{}');
+        author = u.name || u.email || 'Admin';
+        if (u.id) {
+          userId = Number(u.id);
+          authHeaders['X-User-ID'] = String(u.id);
+        }
+        if (u.tenant_id) authHeaders['X-Tenant-ID'] = String(u.tenant_id);
+      } catch {}
+    }
+    if (token) authHeaders['Authorization'] = `Bearer ${token}`;
+
     await fetch(`${API_BASE_URL}/leads/${leadId}/conversations/${conv.id}/replies`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: replyText, author_name: 'Admin' }),
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ content: replyText, author_name: author, author_id: userId }),
     });
     setReplyText('');
     setSubmitting(false);
@@ -172,19 +189,41 @@ function ConversationCard({ conv, leadId, onRefresh }: { conv: any; leadId: any;
 export default function ConversationsTab({ leadId, conversations, employees, currentUser, onRefresh }: ConversationsTabProps) {
   const { language } = useLanguage();
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ title: '', type: 'call', description: '', author_name: 'Admin' });
+  const defaultAuthor = currentUser || (() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const u = JSON.parse(localStorage.getItem('crm_user') || localStorage.getItem('user') || '{}');
+        return u.name || u.email || 'Admin';
+      } catch {}
+    }
+    return 'Admin';
+  })();
+  const [form, setForm] = useState({ title: '', type: 'call', description: '', author_name: defaultAuthor });
   const [submitting, setSubmitting] = useState(false);
   const [filterType, setFilterType] = useState('all');
 
   const handleSubmit = async () => {
     if (!form.title.trim()) return;
     setSubmitting(true);
+    let userId: number | undefined;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const authHeaders: Record<string, string> = {};
+    if (typeof window !== 'undefined') {
+      try {
+        const u = JSON.parse(localStorage.getItem('crm_user') || localStorage.getItem('user') || '{}');
+        if (u.id) userId = Number(u.id);
+        if (userId) authHeaders['X-User-ID'] = String(userId);
+        if (u.tenant_id) authHeaders['X-Tenant-ID'] = String(u.tenant_id);
+      } catch {}
+    }
+    if (token) authHeaders['Authorization'] = `Bearer ${token}`;
+
     await fetch(`${API_BASE_URL}/leads/${leadId}/conversations`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({ ...form, author_id: userId }),
     });
-    setForm({ title: '', type: 'call', description: '', author_name: 'Admin' });
+    setForm({ title: '', type: 'call', description: '', author_name: defaultAuthor });
     setShowForm(false);
     setSubmitting(false);
     onRefresh();

@@ -66,13 +66,23 @@ export default function TopRightControls() {
     return v === k ? section.heading : v;
   };
 
+  const isSalesRole = (r: string) => {
+    const s = String(r || '').toLowerCase();
+    return s.includes('sale') || s === 'employee';
+  };
+
   const navSections = defaultSidebarSections
     .map((section: any) => ({
       ...section,
       items: (section.items || []).filter(
-        (item: any) =>
-          (role === "SuperAdmin" || item.roles?.includes(role)) &&
-          !QUICK_HREFS.includes(item.href)
+        (item: any) => {
+          if (item.id === 'item-my-reports' || item.href === '/my-reports') return false;
+          if (['item-institute-analytics', 'item-ai-reports', 'item-reports'].includes(item.id)) {
+            if (isSalesRole(role) || !['Admin', 'SuperAdmin', 'Demo'].includes(role)) return false;
+          }
+          return (role === "SuperAdmin" || item.roles?.includes(role)) &&
+            !QUICK_HREFS.includes(item.href);
+        }
       ),
     }))
     .filter((section: any) => section.items.length > 0);

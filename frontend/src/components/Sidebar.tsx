@@ -8,7 +8,7 @@ import {
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
   Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Edit2, GripVertical, Check,
-  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox
+  Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox, Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole, Role } from "@/context/RoleContext";
@@ -42,7 +42,7 @@ export const iconMap: Record<string, any> = {
   LayoutDashboard, Bell, Users, FolderOpen, CheckSquare, CheckCircle, Radar, Mail,
   Zap, LayoutList, Globe, BarChart2, Activity, FileText, FileEdit, ShoppingBag, Settings,
   Moon, Sun, ChevronDown, ChevronRight, Search, PanelLeftClose, PanelLeftOpen, Calendar,
-  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox
+  Phone, Package, ShoppingCart, Truck, HeadphonesIcon, BookOpen, FileBarChart2, Briefcase, Trophy, Star, GraduationCap, Layers, UserCog, CalendarClock, PieChart, Inbox, Sparkles
 };
 
 // Roles shown the Inbox item (the "Student Leads" roles). routers/inbox.py enforces access server-side and
@@ -106,8 +106,8 @@ export const defaultSidebarSections = [
     heading: "ACTIVITIES & OPERATIONS",
     items: [
       { id: "item-task-sheet", name: "Task Sheet", icon: "FileBarChart2", href: "/task-sheet", roles: ["Admin", "Employee", "SalesManager", "ProjectMember", "Demo"] },
-      { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "SalesManager", "Demo"] },
-      { id: "item-institute-analytics", name: "My Analytics", icon: "PieChart", href: "/institute-analytics", roles: ["Admin", "SalesManager", "Employee", "Demo"] },
+      { id: "item-reports", name: "Reports", icon: "BarChart2", href: "/reports", roles: ["Admin", "Demo"] },
+      { id: "item-institute-analytics", name: "My Analytics", icon: "PieChart", href: "/institute-analytics", roles: ["Admin", "Demo"] },
       { id: "item-calls", name: "Calls", icon: "Phone", href: "/calls", roles: ["Admin", "SalesManager", "Demo"] },
     ],
   },
@@ -123,6 +123,7 @@ export const defaultSidebarSections = [
     id: "section-ai-agents",
     heading: "AI AGENTS",
     items: [
+      { id: "item-ai-reports", name: "AI Reports", icon: "Sparkles", href: "/ai-reports", roles: ["Admin", "Demo"] },
       { id: "item-email-agent", name: "Email Agent", icon: "Mail", href: "/email-agent", roles: ["Admin", "Employee", "SalesManager", "Demo"] },
     ],
   },
@@ -176,8 +177,22 @@ function SortableSection({ section, role, pathname, collapsed, isEditMode, onRen
     setIsEditing(false);
   };
 
+  const isSalesRole = (r: string) => {
+    const s = String(r || '').toLowerCase();
+    return s.includes('sale') || s === 'employee';
+  };
+
   const visibleItems = section.items
-    .filter((item: any) => (role === 'SuperAdmin' || item.roles.includes(role)) && !(item.id === 'item-reports' && !['Admin', 'SuperAdmin'].includes(role)))
+    .filter((item: any) => {
+      // "My Reports" removed for both Admin and Sales
+      if (item.id === 'item-my-reports' || item.href === '/my-reports') return false;
+      // "My Analytics" and "AI Reports" removed for Sales
+      if (['item-institute-analytics', 'item-ai-reports'].includes(item.id)) {
+        if (isSalesRole(role) || !['Admin', 'SuperAdmin', 'Demo'].includes(role)) return false;
+      }
+      if (item.id === 'item-reports' && !['Admin', 'SuperAdmin'].includes(role)) return false;
+      return role === 'SuperAdmin' || item.roles.includes(role);
+    })
     .filter((item: any) => !searchQuery || item.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   if (visibleItems.length === 0) return null;
@@ -463,7 +478,9 @@ export function Sidebar({ role }: SidebarProps) {
                 i.id !== "item-deals" &&
                 i.href !== "/pipeline" &&
                 i.id !== "item-meetings" &&
-                i.href !== "/meetings"),
+                i.href !== "/meetings" &&
+                i.id !== "item-my-reports" &&
+                i.href !== "/my-reports"),
             });
             const mergedSectionsClean = mergedSections.map(stripDisabled);
             
@@ -566,10 +583,21 @@ export function Sidebar({ role }: SidebarProps) {
     });
   });
 
+  const isSalesRole = (r: string) => {
+    const s = String(r || '').toLowerCase();
+    return s.includes('sale') || s === 'employee';
+  };
+
   const favouriteItems = favourites
     .map(id => allItemsMap.get(id))
     .filter(Boolean)
-    .filter(item => role === 'SuperAdmin' || item.roles?.includes(role))
+    .filter((item: any) => {
+      if (item.id === 'item-my-reports' || item.href === '/my-reports') return false;
+      if (['item-institute-analytics', 'item-ai-reports', 'item-reports'].includes(item.id)) {
+        if (isSalesRole(role) || !['Admin', 'SuperAdmin', 'Demo'].includes(role)) return false;
+      }
+      return role === 'SuperAdmin' || item.roles?.includes(role);
+    })
     .filter(item => !searchQuery || item.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
   const labelFor = (item: any) => {
