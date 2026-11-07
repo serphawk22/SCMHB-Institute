@@ -29,6 +29,7 @@ import TasksTab from './components/tabs/TasksTab';
 import FilesTab from './components/tabs/FilesTab';
 import RecordEmailTab from '@/components/email/RecordEmailTab';
 import RecordFollowUpsTab from '@/components/followups/RecordFollowUpsTab';
+import LeadTransferModal from '@/components/LeadTransferModal';
 
 // ─── Tab definitions ───────────────────────────────────────────────────────────
 const TABS = [
@@ -599,12 +600,14 @@ export default function LeadDetailsPage() {
         const text = await res.text().catch(() => "");
         let data: any = {};
         try { data = JSON.parse(text); } catch (e) {}
-        // Automatically assign the newly created user to this client
-        await fetch(`${API_BASE_URL}/leads/${id}/assign-employee`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ employee_id: data.user.id }),
-        });
+        if (!lead?.assignedEmployeeId) {
+          const assignment = await fetch(`${API_BASE_URL}/leads/${id}/assign-employee`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ employee_id: data.user.id }),
+          });
+          if (!assignment.ok) throw new Error('Could not assign the new salesperson to this lead.');
+        }
         setNewUserForm({ name: '', email: '', role: 'SalesManager', password: 'password123' });
         setIsCreateUserOpen(false);
         fetchAll(); // Refresh employees and client details
@@ -663,7 +666,7 @@ export default function LeadDetailsPage() {
   if (loading || pageLoading) return <PageSkeleton />;
 
   // Auth guard
-  if (role && role !== 'Admin' && role !== 'SuperAdmin' && role !== 'Employee' && role !== 'SalesManager' && role !== 'Demo') {
+  if (role && role !== 'Admin' && role !== 'SuperAdmin' && role !== 'Employee' && role !== 'SalesManager' && (role as string) !== 'Sales' && role !== 'Intern' && role !== 'Demo') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-zinc-950 ">
         <div className="text-center">
@@ -674,8 +677,8 @@ export default function LeadDetailsPage() {
     );
   }
 
-  // Enforce assignment for SalesManager
-  if (lead && role === 'SalesManager' && String(lead.assignedEmployeeId) !== String(user?.id)) {
+  // Sales staff can only open leads assigned to them.
+  if (lead && ['SalesManager', 'Sales', 'Employee', 'Intern'].includes(role || '') && String(lead.assignedEmployeeId) !== String(user?.id)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-zinc-950 ">
         <div className="text-center">
@@ -754,6 +757,28 @@ export default function LeadDetailsPage() {
         darkMode={darkMode}
         onToggleDarkMode={toggleDarkMode}
       />
+      {(role === 'Admin' || role === 'SuperAdmin' || role === 'Demo' || role === 'SalesManager' || (role as string) === 'Sales' || role === 'Employee' || role === 'Intern') && (
+        <div className="flex justify-end border-b border-slate-200 bg-white px-6 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+          <LeadTransferModal
+            leads={lead ? [lead] : []}
+            salesPeople={employees
+              .filter(person => ['SalesManager', 'Sales', 'Employee'].includes(person.role))
+              .map(person => ({ id: person.id, name: person.name || person.email }))}
+            isAdmin={role === 'Admin' || role === 'SuperAdmin' || role === 'Demo'}
+            userId={user?.id}
+            getAuthHeaders={() => {
+              const token = localStorage.getItem('token');
+              return {
+                ...(token ? { Authorization: "Bearer " + token } : {}),
+                ...(user?.id ? { 'X-User-ID': String(user.id) } : {}),
+                ...(user?.tenant_id ? { 'X-Tenant-ID': String(user.tenant_id) } : {}),
+              };
+            }}
+            onTransferred={fetchAll}
+            compact
+          />
+        </div>
+      )}
 
       {/* ── Full-Width layout ──────────────────────────────────────── */}
       <div className="w-full px-4 py-4">
@@ -925,6 +950,7 @@ export default function LeadDetailsPage() {
                 )}
                 <select
                   value={lead?.assignedEmployeeId || ''}
+                  disabled={Boolean(lead?.assignedEmployeeId)}
                   onChange={async (e) => {
                     const val = e.target.value;
                     if (!val) return;
@@ -960,10 +986,11 @@ export default function LeadDetailsPage() {
                   <option value="">{language === 'es' ? 'Cambiar vendedor…' : 'Change salesperson…'}</option>
                   <option value="auto_assign">Auto-assign by collected revenue</option>
                   <option value="create_new" className="font-bold text-indigo-600">➕ {language === 'es' ? 'Crear Nuevo Vendedor' : 'Create New Salesperson'}</option>
-                  {employees.filter((e: any) => ["Employee", "Admin", "SalesManager"].includes(e.role)).map((e: any) => (
+                  {employees.filter((e: any) => ["Employee", "Sales", "SalesManager"].includes(e.role)).map((e: any) => (
                     <option key={e.id} value={e.id}>{e.name} — {e.role}</option>
                   ))}
                 </select>
+                {lead?.assignedEmployeeId && <p className="mt-2 text-[11px] text-slate-500">Use Transfer leads above to change the owner and record the transfer reason.</p>}
               </div>
             )}
 

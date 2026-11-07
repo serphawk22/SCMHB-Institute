@@ -14,6 +14,7 @@ import {
   ChevronDown, CalendarDays, UserCheck, Filter, Mail, Search, ExternalLink, UserRound
 } from "lucide-react";
 import { useRole } from "@/context/RoleContext";
+import LeadTransferReports from "./LeadTransferReports";
 
 const COLORS = ["#8b5cf6","#06b6d4","#10b981","#f59e0b","#ef4444","#ec4899","#6366f1","#14b8a6","#f97316","#64748b"];
 
@@ -1049,6 +1050,8 @@ export default function InstituteAnalyticsPage() {
           )}
         </>
       )}
+
+      {isAdmin && <LeadTransferReports getAuthHeaders={getAuthHeaders} />}
     </div>
   );
 }

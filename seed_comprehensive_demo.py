@@ -1,7 +1,7 @@
 """Comprehensive Seed Script for SerpHawk CRM & Training Institute.
 Seeds a complete, realistic, interconnected dataset with:
 - 1 Tenant & Client Statuses
-- 13 Users (SuperAdmin, Admin, SalesManager, 4 Salesmen, 5 Instructors, 2 Student users)
+- 16 Users (SuperAdmin, Admin, SalesManager, 4 Salesmen, 3 Admissions users, 5 Instructors, 2 Student users)
 - 5 Professional Instructors & Profiles
 - 5 Industry-grade Courses with complete syllabi
 - 8 Batches (Active, Upcoming, Completed)
@@ -114,6 +114,10 @@ def main():
             ("sarah.jenkins@hawktech.edu", "HawkSales!2026", "Sarah Jenkins", "Employee", "+1 555-0122"),
             ("david.kumar@hawktech.edu", "HawkSales!2026", "David Kumar", "Employee", "+1 555-0123"),
             ("emily.watson@hawktech.edu", "HawkSales!2026", "Emily Watson", "Employee", "+1 555-0124"),
+            # Admissions team
+            ("admissions1@hawktech.test", "HawkAdmission!2026", "Admissions Coordinator 1", "Admissions", "+1 555-0141"),
+            ("admissions2@hawktech.test", "HawkAdmission!2026", "Admissions Coordinator 2", "Admissions", "+1 555-0142"),
+            ("admissions3@hawktech.test", "HawkAdmission!2026", "Admissions Coordinator 3", "Admissions", "+1 555-0143"),
             # Instructors
             ("rajesh.sharma@hawktech.edu", "HawkTeach!2026", "Dr. Rajesh Sharma", "Instructor", "+1 555-0131"),
             ("ananya.verma@hawktech.edu", "HawkTeach!2026", "Ananya Verma", "Instructor", "+1 555-0132"),
@@ -160,6 +164,11 @@ def main():
             users["emily.watson@hawktech.edu"],
         ]
         sales_manager = users["marcus.vance@hawktech.edu"]
+        admissions_team = [
+            users["admissions1@hawktech.test"],
+            users["admissions2@hawktech.test"],
+            users["admissions3@hawktech.test"],
+        ]
         print(f"✓ Users seeded: {len(users)} staff, salesmen, instructors, and demo accounts")
 
         # 4. Courses (5 comprehensive courses)
@@ -748,6 +757,7 @@ def main():
                 source=lead.source,
                 lead_id=lead.id,
                 assigned_salesperson_id=salesman.id,
+                admissions_assignee_id=admissions_team[s_idx % len(admissions_team)].id,
                 status=st_status,
                 drop_reason=drop_reason,
                 improvement_plan=drop_plan,

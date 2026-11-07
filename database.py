@@ -1171,6 +1171,8 @@ class Invoice(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     invoice_number: str = Field(max_length=50, index=True)
     client_id: Optional[int] = Field(default=None, foreign_key="client_profiles.id")
+    student_id: Optional[int] = Field(default=None, foreign_key="students.id", index=True)
+    enrollment_id: Optional[int] = Field(default=None, foreign_key="enrollments.id", index=True)
     service_request_id: Optional[int] = Field(default=None, foreign_key="service_requests.id")
     amount: float = Field(default=0.0)
     tax: float = Field(default=0.0)
@@ -1430,6 +1432,19 @@ class Lead(SQLModel, table=True):
 
     account: Optional[Account] = Relationship(back_populates="leads")
     contacts: List["Contact"] = Relationship(back_populates="lead")
+
+
+class LeadTransferHistory(SQLModel, table=True):
+    __tablename__ = "lead_transfer_history"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tenant_id: Optional[int] = Field(default=None, foreign_key="tenants.id", index=True)
+    lead_id: int = Field(foreign_key="leads.id", index=True)
+    from_user_id: int = Field(foreign_key="users.id", index=True)
+    to_user_id: int = Field(foreign_key="users.id", index=True)
+    transferred_by: int = Field(foreign_key="users.id")
+    lead_stage: str = Field(max_length=100)
+    reason: str = Field(sa_column=Column(Text))
+    transferred_at: datetime = Field(default_factory=datetime.utcnow, index=True)
 
 
 class LeadDemoSession(SQLModel, table=True):
@@ -2242,6 +2257,7 @@ class Student(SQLModel, table=True):
     source: Optional[str] = Field(default=None, max_length=100)  # walk-in, referral, online, lead
     lead_id: Optional[int] = Field(default=None, foreign_key="leads.id", index=True)
     assigned_salesperson_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    admissions_assignee_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
     status: str = Field(default="Active", max_length=50)  # Active, Inactive, Dropped, Completed
     drop_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
     improvement_plan: Optional[str] = Field(default=None, sa_column=Column(Text))

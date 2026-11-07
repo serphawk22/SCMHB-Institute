@@ -129,7 +129,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import Depends, FastAPI, HTTPException, Query, Form, UploadFile, File, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from database import (
@@ -164,6 +164,7 @@ from database import (
     KeywordRankEntry,
     Lead,
     LeadNote,
+    LeadTransferHistory,
     MessageThread,
     Milestone,
     NPSSurvey,
@@ -1705,6 +1706,18 @@ class AssignEmployeeRequest(BaseModel):
     employee_id: int
 
 
+class LeadBulkAssignRequest(BaseModel):
+    lead_ids: List[int]
+    employee_id: int
+
+
+class LeadTransferRequest(BaseModel):
+    lead_ids: List[int]
+    employee_id: int
+    reason: str
+    source_employee_id: Optional[int] = None
+
+
 class KeywordRequest(BaseModel):
     keyword: str
 
@@ -2135,6 +2148,7 @@ def _normalize_role(role: Optional[str]) -> str:
         "instructor": "Instructor",
         "salesmanager": "SalesManager",
         "sales": "Sales",
+        "admissions": "Admissions",
         "demo": "Demo",
         "projectmember": "ProjectMember",
     }
@@ -3592,7 +3606,7 @@ def delete_user(user_id: int, session: Session = Depends(get_session)):
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/employees")
 def list_employees(session: Session = Depends(get_session)):
-    query = select(User).where(User.role.in_(["Employee", "Admin", "SalesManager"]))
+    query = select(User).where(User.role.in_(["Employee", "Admin", "SalesManager", "Sales"]))
     tenant_id = current_tenant_id.get()
     if tenant_id:
         query = query.where(User.tenant_id == tenant_id)
@@ -4557,9 +4571,20 @@ async def generate_client_swot(client_id: int, session: Session = Depends(get_se
 def assign_employee_lead(
     lead_id: int, body: AssignEmployeeRequest, session: Session = Depends(get_session)
 ):
+    actor = _require_roles(session, ["Admin", "Demo"])
     lead = session.get(Lead, lead_id)
-    if not lead:
+    if not lead or (
+        lead.tenant_id and actor.tenant_id and lead.tenant_id != actor.tenant_id
+    ):
         raise HTTPException(status_code=404, detail="Lead not found")
+    employee = _validate_salesperson(session, body.employee_id)
+    if employee and actor.tenant_id and employee.tenant_id != actor.tenant_id:
+        raise HTTPException(status_code=404, detail="Salesperson not found")
+    if lead.owner_id is not None and lead.owner_id != body.employee_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Use the lead transfer flow to change an assigned salesperson",
+        )
     lead.owner_id = body.employee_id
     session.add(lead)
     if lead.converted_student_id:
@@ -4569,6 +4594,169 @@ def assign_employee_lead(
             session.add(student)
     session.commit()
     return {"ok": True}
+
+
+@app.post("/leads/bulk-assign")
+def bulk_assign_leads(body: LeadBulkAssignRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Demo"])
+    lead_ids = list(dict.fromkeys(body.lead_ids))
+    if not lead_ids or len(lead_ids) > 500:
+        raise HTTPException(status_code=422, detail="Select between 1 and 500 leads")
+    salesperson = _validate_salesperson(session, body.employee_id)
+    if salesperson is None or (
+        actor.tenant_id and salesperson.tenant_id != actor.tenant_id
+    ):
+        raise HTTPException(status_code=422, detail="Choose an active salesperson in your team")
+
+    query = select(Lead).where(Lead.id.in_(lead_ids))
+    if actor.tenant_id:
+        query = query.where(or_(Lead.tenant_id == actor.tenant_id, Lead.tenant_id == None))
+    leads = session.exec(query).all()
+    if len(leads) != len(lead_ids):
+        raise HTTPException(status_code=404, detail="One or more selected leads were not found")
+
+    if any(lead.owner_id not in (None, salesperson.id) for lead in leads):
+        raise HTTPException(
+            status_code=409,
+            detail="Use the lead transfer flow to change an assigned salesperson",
+        )
+
+    for lead in leads:
+        lead.owner_id = salesperson.id
+        if lead.converted_student_id:
+            student = session.get(Student, lead.converted_student_id)
+            if student:
+                student.assigned_salesperson_id = salesperson.id
+                session.add(student)
+        session.add(lead)
+    session.commit()
+    return {"ok": True, "assigned": len(leads), "employee_id": salesperson.id}
+
+
+@app.post("/leads/transfer")
+def transfer_leads(body: LeadTransferRequest, session: Session = Depends(get_session)):
+    actor = _require_roles(
+        session, ["Admin", "SuperAdmin", "Demo", "SalesManager", "Sales", "Employee", "Intern"]
+    )
+    reason = body.reason.strip()
+    lead_ids = list(dict.fromkeys(body.lead_ids))
+    if not reason:
+        raise HTTPException(status_code=422, detail="A transfer reason is required")
+    if len(reason) > 1000:
+        raise HTTPException(status_code=422, detail="Transfer reason must be 1000 characters or fewer")
+    if not lead_ids or len(lead_ids) > 500:
+        raise HTTPException(status_code=422, detail="Select between 1 and 500 leads")
+
+    actor_role = _normalize_role(actor.role)
+    is_admin = actor_role in ("Admin", "SuperAdmin", "Demo")
+    source_id = body.source_employee_id if is_admin else actor.id
+    if source_id is None:
+        raise HTTPException(status_code=422, detail="Choose a source salesperson")
+    if not is_admin and body.source_employee_id not in (None, actor.id):
+        raise HTTPException(status_code=403, detail="You can only transfer leads assigned to you")
+
+    source = _validate_salesperson(session, source_id)
+    if source is None or _normalize_role(source.role) not in ("SalesManager", "Employee", "Sales") or (
+        actor.tenant_id and source.tenant_id != actor.tenant_id
+    ):
+        raise HTTPException(status_code=404, detail="Source salesperson not found")
+    destination = _validate_salesperson(session, body.employee_id)
+    if destination is None or _normalize_role(destination.role) not in ("SalesManager", "Employee", "Sales") or (
+        actor.tenant_id and destination.tenant_id != actor.tenant_id
+    ):
+        raise HTTPException(status_code=422, detail="Choose an active salesperson in your team")
+    if source.id == destination.id:
+        raise HTTPException(status_code=422, detail="Choose a different destination salesperson")
+
+    query = select(Lead).where(
+        Lead.id.in_(lead_ids),
+        Lead.owner_id == source.id,
+    )
+    if actor.tenant_id:
+        query = query.where(or_(Lead.tenant_id == actor.tenant_id, Lead.tenant_id == None))
+    leads = session.exec(query).all()
+    if len(leads) != len(lead_ids):
+        raise HTTPException(
+            status_code=409,
+            detail="Some selected leads are not assigned to the selected source salesperson",
+        )
+    if any(
+        lead.tenant_id is not None
+        and (source.tenant_id != lead.tenant_id or destination.tenant_id != lead.tenant_id)
+        for lead in leads
+    ):
+        raise HTTPException(status_code=404, detail="Salesperson not found for one or more leads")
+
+    for lead in leads:
+        session.add(LeadTransferHistory(
+            tenant_id=lead.tenant_id or actor.tenant_id,
+            lead_id=lead.id,
+            from_user_id=source.id,
+            to_user_id=destination.id,
+            transferred_by=actor.id,
+            lead_stage=lead.status or "New",
+            reason=reason,
+        ))
+        lead.owner_id = destination.id
+        session.add(lead)
+        if lead.converted_student_id:
+            student = session.get(Student, lead.converted_student_id)
+            if student:
+                student.assigned_salesperson_id = destination.id
+                session.add(student)
+
+    session.commit()
+    return {
+        "ok": True,
+        "transferred": len(leads),
+        "source_employee_id": source.id,
+        "employee_id": destination.id,
+    }
+
+
+@app.get("/leads/{lead_id}/transfers")
+def get_lead_transfers(lead_id: int, session: Session = Depends(get_session)):
+    actor = _require_roles(
+        session, ["Admin", "SuperAdmin", "Demo", "SalesManager", "Sales", "Employee", "Intern"]
+    )
+    lead = session.get(Lead, lead_id)
+    if not lead or (
+        actor.tenant_id and lead.tenant_id != actor.tenant_id
+    ):
+        raise HTTPException(status_code=404, detail="Lead not found")
+    actor_role = _normalize_role(actor.role)
+    if actor_role not in ("Admin", "SuperAdmin", "Demo") and lead.owner_id != actor.id:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    history = session.exec(
+        select(LeadTransferHistory)
+        .where(LeadTransferHistory.lead_id == lead_id)
+        .order_by(LeadTransferHistory.transferred_at.desc())
+    ).all()
+    user_ids = {
+        user_id
+        for item in history
+        for user_id in (item.from_user_id, item.to_user_id, item.transferred_by)
+    }
+    users = {
+        user.id: user for user in session.exec(select(User).where(User.id.in_(user_ids))).all()
+    } if user_ids else {}
+    return {
+        "transfers": [
+            {
+                "id": item.id,
+                "from_user_id": item.from_user_id,
+                "from_name": users[item.from_user_id].name if item.from_user_id in users else "Unknown",
+                "to_user_id": item.to_user_id,
+                "to_name": users[item.to_user_id].name if item.to_user_id in users else "Unknown",
+                "transferred_by": item.transferred_by,
+                "transferred_by_name": users[item.transferred_by].name if item.transferred_by in users else "Unknown",
+                "lead_stage": item.lead_stage,
+                "reason": item.reason,
+                "transferred_at": item.transferred_at.isoformat(),
+            }
+            for item in history
+        ]
+    }
 
 
 @app.post("/leads/{lead_id}/auto-assign-employee")
@@ -6064,6 +6252,172 @@ def _report_date(value: Optional[str], fallback: date) -> date:
 
 def _in_report_range(value: Optional[datetime], start: date, end: date) -> bool:
     return bool(value and start <= value.date() <= end)
+
+
+@app.get("/reports/lead-transfers")
+def lead_transfer_report(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    all_time: Optional[bool] = False,
+    session: Session = Depends(get_session),
+):
+    actor = _require_roles(session, ["Admin", "SuperAdmin", "Demo"])
+    today = datetime.utcnow().date()
+    start = date(2020, 1, 1) if all_time else _report_date(start_date, today - timedelta(days=29))
+    end = date(2035, 12, 31) if all_time else _report_date(end_date, today)
+    if start > end:
+        raise HTTPException(status_code=400, detail="start_date must be before end_date")
+
+    query = select(LeadTransferHistory).order_by(LeadTransferHistory.transferred_at.desc())
+    if actor.tenant_id and actor.tenant_id != 1:
+        query = query.where(LeadTransferHistory.tenant_id == actor.tenant_id)
+    transfers = [
+        item for item in session.exec(query).all()
+        if _in_report_range(item.transferred_at, start, end)
+    ]
+    lead_ids = {item.lead_id for item in transfers}
+    user_ids = {
+        user_id for item in transfers
+        for user_id in (item.from_user_id, item.to_user_id, item.transferred_by)
+    }
+    leads = {
+        lead.id: lead
+        for lead in session.exec(select(Lead).where(Lead.id.in_(lead_ids))).all()
+    } if lead_ids else {}
+    users = {
+        user.id: user for user in session.exec(select(User).where(User.id.in_(user_ids))).all()
+    } if user_ids else {}
+    return {
+        "total": len(transfers),
+        "transfers": [
+            {
+                "id": item.id,
+                "lead_id": item.lead_id,
+                "lead_name": leads[item.lead_id].company_name if item.lead_id in leads else "Deleted lead",
+                "lead_stage": item.lead_stage,
+                "from_user_id": item.from_user_id,
+                "from_name": users[item.from_user_id].name if item.from_user_id in users else "Unknown",
+                "to_user_id": item.to_user_id,
+                "to_name": users[item.to_user_id].name if item.to_user_id in users else "Unknown",
+                "transferred_by_name": users[item.transferred_by].name if item.transferred_by in users else "Unknown",
+                "reason": item.reason,
+                "transferred_at": item.transferred_at.isoformat(),
+            }
+            for item in transfers[:1000]
+        ],
+    }
+
+
+@app.get("/reports/sales-contribution")
+def sales_contribution_report(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    all_time: Optional[bool] = False,
+    session: Session = Depends(get_session),
+):
+    actor = _require_roles(session, ["Admin", "SuperAdmin", "Demo"])
+    from database import LeadDemoSession, LeadFollowUp, LeadWalkIn, LeadWebinar, Meeting
+
+    today = datetime.utcnow().date()
+    start = date(2020, 1, 1) if all_time else _report_date(start_date, today - timedelta(days=29))
+    end = date(2035, 12, 31) if all_time else _report_date(end_date, today)
+    if start > end:
+        raise HTTPException(status_code=400, detail="start_date must be before end_date")
+
+    lead_query = select(Lead)
+    if actor.tenant_id and actor.tenant_id != 1:
+        lead_query = lead_query.where(Lead.tenant_id == actor.tenant_id)
+    leads = session.exec(lead_query).all()
+    leads_by_id = {lead.id: lead for lead in leads}
+    lead_ids = set(leads_by_id)
+    user_query = select(User).where(User.role.in_(["SalesManager", "Employee", "Sales"]))
+    if actor.tenant_id and actor.tenant_id != 1:
+        user_query = user_query.where(User.tenant_id == actor.tenant_id)
+    users = session.exec(user_query).all()
+    counts: Dict[int, Dict[str, int]] = {
+        user.id: {
+            "communications": 0,
+            "follow_ups": 0,
+            "meetings": 0,
+            "walk_ins": 0,
+            "webinars": 0,
+            "demos": 0,
+        }
+        for user in users
+    }
+
+    def add_event(user_id: Optional[int], category: str, occurred_at: Optional[datetime]):
+        if (
+            user_id in counts
+            and _in_report_range(occurred_at, start, end)
+        ):
+            counts[user_id][category] += 1
+
+    if lead_ids:
+        conversations = session.exec(
+            select(ConversationLog).where(ConversationLog.lead_id.in_(lead_ids))
+        ).all()
+        for item in conversations:
+            add_event(item.author_id, "communications", item.created_at)
+
+        followups = session.exec(
+            select(LeadFollowUp).where(LeadFollowUp.lead_id.in_(lead_ids))
+        ).all()
+        for item in followups:
+            if (item.status or "").lower() in ("done", "completed"):
+                add_event(item.created_by, "follow_ups", item.updated_at or item.created_at)
+
+        meetings = session.exec(
+            select(Meeting).where(Meeting.lead_id.in_(lead_ids))
+        ).all()
+        for item in meetings:
+            if (item.status or "").lower() == "completed":
+                add_event(item.host_id, "meetings", item.updated_at or item.scheduled_at)
+
+        walk_ins = session.exec(
+            select(LeadWalkIn).where(LeadWalkIn.lead_id.in_(lead_ids))
+        ).all()
+        for item in walk_ins:
+            if (item.status or "").lower() in ("completed", "attended", "done"):
+                add_event(item.created_by, "walk_ins", item.updated_at or item.created_at)
+
+        webinars = session.exec(
+            select(LeadWebinar).where(LeadWebinar.lead_id.in_(lead_ids))
+        ).all()
+        for item in webinars:
+            if (item.status or "").lower() in ("completed", "attended", "done"):
+                add_event(item.created_by, "webinars", item.updated_at or item.created_at)
+
+        demos = session.exec(
+            select(LeadDemoSession).where(LeadDemoSession.lead_id.in_(lead_ids))
+        ).all()
+        for item in demos:
+            if (item.status or "").lower() in ("completed", "attended", "done"):
+                add_event(item.created_by, "demos", item.updated_at or item.created_at)
+
+    result = []
+    for user in users:
+        activity_counts = counts[user.id]
+        total = sum(activity_counts.values())
+        result.append({
+            "user_id": user.id,
+            "name": user.name or user.email,
+            "total_activities": total,
+            "contribution_percentage": 0,
+            **activity_counts,
+        })
+    total_activities = sum(item["total_activities"] for item in result)
+    for item in result:
+        item["contribution_percentage"] = (
+            round(item["total_activities"] / total_activities * 100, 1)
+            if total_activities else 0
+        )
+    result.sort(key=lambda item: (-item["total_activities"], item["name"].lower()))
+    return {
+        "total_activities": total_activities,
+        "methodology": "Each logged conversation and completed follow-up, meeting, walk-in, webinar, or demo counts equally.",
+        "salespeople": result,
+    }
 
 
 @app.get("/reports/summary")
@@ -9178,12 +9532,16 @@ def add_task_comment(
 def _invoice_dict(inv: Invoice, session: Session) -> dict:
     cp = session.get(ClientProfile, inv.client_id) if inv.client_id else None
     u = session.get(User, cp.userId) if cp and cp.userId else None
+    student = session.get(Student, inv.student_id) if inv.student_id else None
     return {
         "id": inv.id,
         "invoice_number": inv.invoice_number,
         "client_id": inv.client_id,
         "client_name": u.name if u else (cp.companyName if cp else None),
         "client_email": u.email if u else None,
+        "student_id": inv.student_id,
+        "student_name": student.name if student else None,
+        "enrollment_id": inv.enrollment_id,
         "service_request_id": inv.service_request_id,
         "amount": inv.amount,
         "tax": inv.tax,
@@ -9786,10 +10144,13 @@ def invoice_pdf(invoice_id: int, provider: Optional[str] = None, session: Sessio
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
     client = session.get(ClientProfile, inv.client_id) if inv.client_id else None
+    student = session.get(Student, inv.student_id) if inv.student_id else None
     client_name = ""
     if client:
         user = session.get(User, client.userId) if client.userId else None
         client_name = client.companyName or (user.name if user else f"Client #{client.id}")
+    elif student:
+        client_name = student.name
 
     from modules.pdf_export import invoice_pdf as _invoice_pdf
     pdf = _invoice_pdf({
@@ -13891,6 +14252,9 @@ def convert_lead_to_student(
         student = session.exec(select(Student).where(Student.lead_id == lead.id)).first()
     if not student:
         interest_course = course or (session.get(Course, lead.course_interest_id) if lead.course_interest_id else None)
+        admissions_user = _choose_admissions_assignee(
+            session, lead.tenant_id or actor.tenant_id
+        )
         student = Student(
             tenant_id=lead.tenant_id or actor.tenant_id,
             lead_id=lead.id,
@@ -13908,6 +14272,7 @@ def convert_lead_to_student(
             course_plan=lead.course_plan,
             source=lead.source,
             assigned_salesperson_id=lead.owner_id,
+            admissions_assignee_id=admissions_user.id if admissions_user else None,
             notes=lead.notes,
         )
         session.add(student)
@@ -13915,6 +14280,12 @@ def convert_lead_to_student(
     else:
         if not student.assigned_salesperson_id:
             student.assigned_salesperson_id = lead.owner_id
+        if not student.admissions_assignee_id:
+            admissions_user = _choose_admissions_assignee(
+                session, student.tenant_id or lead.tenant_id or actor.tenant_id
+            )
+            if admissions_user:
+                student.admissions_assignee_id = admissions_user.id
         if batch:
             student.course_interest = course.title
             student.course_interest_id = course.id
@@ -13972,6 +14343,7 @@ def convert_lead_to_student(
         "message": "Lead enrolled as a student" if batch else "Lead converted to student",
         "student_id": student.id,
         "enrollment_id": enrollment.id if enrollment else None,
+        "admissions_assignee_id": student.admissions_assignee_id,
     }
 
 
@@ -19505,7 +19877,7 @@ def get_lead_sent_emails(lead_id: int, session: Session = Depends(get_session)):
 # TRAINING INSTITUTE API ENDPOINTS
 # ============================================================
 
-from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn, LeadWebinar
+from database import Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, Attendance, InstituteSession, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn, LeadWebinar, LeadTransferHistory
 
 # --- Create tables on startup (migration) ---
 def _create_institute_tables():
@@ -19513,7 +19885,7 @@ def _create_institute_tables():
     from database import engine
     inspector = inspect(engine)
     existing = inspector.get_table_names()
-    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn, LeadWebinar]
+    tables_to_create = [Course, Instructor, Batch, Student, Enrollment, PaymentRecord, Invoice, InstructorFeedback, InstituteSession, Attendance, StudentSessionProgress, StudentNote, StudentUpload, LeadDemoSession, InstituteResource, LeadFollowUp, LeadWalkIn, LeadWebinar, LeadTransferHistory]
     from sqlmodel import SQLModel
     for model in tables_to_create:
         if model.__tablename__ not in existing:
@@ -19531,6 +19903,7 @@ def _create_institute_tables():
             ("students", "course_interest", "VARCHAR(200)"),
             ("students", "course_interest_id", "INTEGER REFERENCES courses(id)"),
             ("students", "assigned_salesperson_id", "INTEGER REFERENCES users(id)"),
+            ("students", "admissions_assignee_id", "INTEGER REFERENCES users(id)"),
             ("students", "gpa", "FLOAT"),
             ("students", "education_level", "VARCHAR(120)"),
             ("students", "academic_background", "TEXT"),
@@ -19552,6 +19925,8 @@ def _create_institute_tables():
             ("batches", "assignment_strategy", "VARCHAR(30) DEFAULT 'manual'"),
             ("tasks", "student_id", "INTEGER REFERENCES students(id)"),
             ("tasks", "batch_id", "INTEGER REFERENCES batches(id)"),
+            ("invoices", "student_id", "INTEGER REFERENCES students(id)"),
+            ("invoices", "enrollment_id", "INTEGER REFERENCES enrollments(id)"),
         ]:
             if table in inspector.get_table_names() and column not in {item["name"] for item in inspector.get_columns(table)}:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}"))
@@ -19564,6 +19939,18 @@ def _create_institute_tables():
             columns = {item["name"] for item in inspector.get_columns(table)}
             if "tenant_id" in model.__table__.columns and "tenant_id" not in columns:
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN tenant_id INTEGER REFERENCES tenants(id)"))
+        if "students" in inspector.get_table_names():
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_students_admissions_assignee_id "
+                "ON students (admissions_assignee_id)"
+            ))
+        if "invoices" in inspector.get_table_names():
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_invoices_student_id ON invoices (student_id)"
+            ))
+            conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_invoices_enrollment_id ON invoices (enrollment_id)"
+            ))
 
 try:
     _create_institute_tables()
@@ -19753,9 +20140,38 @@ def _validate_salesperson(session: Session, user_id: Optional[int]):
     if user_id is None:
         return None
     user = session.get(User, user_id)
-    if not user or not user.is_active or user.role not in ("Admin", "SalesManager", "Employee"):
+    if not user or not user.is_active or _normalize_role(user.role) not in ("Admin", "SalesManager", "Employee", "Sales"):
         raise HTTPException(status_code=422, detail="Choose an active salesperson")
     return user
+
+
+def _choose_admissions_assignee(session: Session, tenant_id: Optional[int]) -> Optional[User]:
+    query = select(User).where(
+        User.role == "Admissions",
+        User.is_active == True,
+        User.tenant_id == tenant_id,
+    )
+    admissions_users = session.exec(query).all()
+    if not admissions_users:
+        return None
+
+    workloads = {
+        user.id: session.exec(
+            select(func.count(Student.id)).where(Student.admissions_assignee_id == user.id)
+        ).one()
+        for user in admissions_users
+        if user.id is not None
+    }
+    return min(
+        (user for user in admissions_users if user.id is not None),
+        key=lambda user: (workloads[user.id], user.id),
+        default=None,
+    )
+
+
+def _require_admissions_student_access(actor: User, student: Student) -> None:
+    if _normalize_role(actor.role) == "Admissions" and student.admissions_assignee_id != actor.id:
+        raise HTTPException(status_code=404, detail="Student not found")
 
 
 def _student_salesperson_id(student: Student, session: Session):
@@ -19769,6 +20185,7 @@ def _require_student_salesperson_access(actor: User, student: Student, session: 
     actor_role = _normalize_role(actor.role)
     if actor_role in ("SalesManager", "Employee", "Sales", "Demo") and _student_salesperson_id(student, session) != actor.id:
         raise HTTPException(status_code=404, detail="Student not found")
+    _require_admissions_student_access(actor, student)
 
 
 def _require_enrollment_access(actor: User, enrollment: Enrollment, session: Session) -> Student:
@@ -19809,6 +20226,13 @@ class PaymentRecordRequest(BaseModel):
     payment_mode: str = "Cash"
     receipt_number: Optional[str] = None
     notes: Optional[str] = None
+
+
+class AdmissionsInvoiceCreateRequest(BaseModel):
+    enrollment_id: int
+    due_date: Optional[str] = None
+    notes: Optional[str] = None
+
 
 class InstructorFeedbackRequest(BaseModel):
     instructor_id: int
@@ -20435,9 +20859,244 @@ def delete_batch(batch_id: int, session: Session = Depends(get_session)):
     return {"ok": True}
 
 # -------------------- STUDENT ENDPOINTS --------------------
+@app.get("/admissions/students")
+def list_admissions_students(session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Admissions", "Demo"])
+    actor_role = _normalize_role(actor.role)
+    query = select(Student)
+    if actor.tenant_id:
+        query = query.where(or_(Student.tenant_id == actor.tenant_id, Student.tenant_id == None))
+    if actor_role == "Admissions":
+        admissions_scope = Student.admissions_assignee_id == actor.id
+        if actor.tenant_id is not None:
+            admissions_scope = or_(
+                admissions_scope,
+                and_(
+                    Student.tenant_id == actor.tenant_id,
+                    Student.admissions_assignee_id == None,
+                ),
+            )
+        query = query.where(admissions_scope)
+    students = session.exec(query.order_by(Student.created_at.desc())).all()
+    student_ids = [student.id for student in students if student.id is not None]
+    enrollments = (
+        session.exec(select(Enrollment).where(Enrollment.student_id.in_(student_ids))).all()
+        if student_ids
+        else []
+    )
+    invoices = (
+        session.exec(select(Invoice).where(Invoice.student_id.in_(student_ids))).all()
+        if student_ids
+        else []
+    )
+    enrollment_ids = [enrollment.id for enrollment in enrollments if enrollment.id is not None]
+    payments = (
+        session.exec(
+            select(PaymentRecord)
+            .where(PaymentRecord.enrollment_id.in_(enrollment_ids))
+            .order_by(PaymentRecord.payment_date.desc())
+        ).all()
+        if enrollment_ids
+        else []
+    )
+    users_query = select(User).where(
+        User.role == "Admissions",
+        User.is_active == True,
+        User.tenant_id == actor.tenant_id,
+    )
+    users = session.exec(users_query).all()
+    user_map = {user.id: user for user in users}
+    invoice_map = {invoice.enrollment_id: invoice for invoice in invoices if invoice.enrollment_id}
+    enrollment_map: dict[int, list[Enrollment]] = {}
+    payment_map: dict[int, list[PaymentRecord]] = {}
+    for enrollment in enrollments:
+        enrollment_map.setdefault(enrollment.student_id, []).append(enrollment)
+    for payment in payments:
+        payment_map.setdefault(payment.enrollment_id, []).append(payment)
+
+    return {
+        "admissions_users": [
+            {"id": user.id, "name": user.name, "email": user.email}
+            for user in users
+        ],
+        "students": [
+            {
+                "id": student.id,
+                "name": student.name,
+                "email": student.email,
+                "phone": student.phone,
+                "course_interest": student.course_interest,
+                "status": student.status,
+                "created_at": student.created_at.isoformat(),
+                "assigned_salesperson_id": student.assigned_salesperson_id,
+                "admissions_assignee_id": student.admissions_assignee_id,
+                "admissions_assignee_name": (
+                    user_map[student.admissions_assignee_id].name
+                    if student.admissions_assignee_id in user_map
+                    else None
+                ),
+                "enrollments": [
+                    {
+                        "id": enrollment.id,
+                        "course_id": enrollment.course_id,
+                        "batch_id": enrollment.batch_id,
+                        "total_fee": enrollment.total_fee,
+                        "amount_paid": enrollment.amount_paid,
+                        "amount_due": enrollment.amount_due,
+                        "payment_status": enrollment.payment_status,
+                        "payments": [
+                            {
+                                "id": payment.id,
+                                "amount": payment.amount,
+                                "payment_mode": payment.payment_mode,
+                                "payment_date": payment.payment_date.isoformat(),
+                                "receipt_number": payment.receipt_number,
+                            }
+                            for payment in payment_map.get(enrollment.id, [])
+                        ],
+                        "invoice": (
+                            {
+                                "id": invoice_map[enrollment.id].id,
+                                "invoice_number": invoice_map[enrollment.id].invoice_number,
+                                "status": invoice_map[enrollment.id].status,
+                            }
+                            if enrollment.id in invoice_map
+                            else None
+                        ),
+                    }
+                    for enrollment in enrollment_map.get(student.id, [])
+                ],
+            }
+            for student in students
+        ],
+    }
+
+
+class AdmissionsAssigneeRequest(BaseModel):
+    admissions_assignee_id: Optional[int] = None
+
+
+@app.post("/admissions/students/auto-assign")
+def auto_assign_admissions_students(session: Session = Depends(get_session)):
+    actor = _require_roles(session, ["Admin", "Demo"])
+    query = select(Student).where(Student.admissions_assignee_id == None)
+    if actor.tenant_id:
+        query = query.where(or_(Student.tenant_id == actor.tenant_id, Student.tenant_id == None))
+    unassigned = session.exec(query.order_by(Student.created_at, Student.id)).all()
+    if not unassigned:
+        return {"ok": True, "assigned": 0}
+
+    user_query = select(User).where(User.role == "Admissions", User.is_active == True)
+    if actor.tenant_id:
+        user_query = user_query.where(User.tenant_id == actor.tenant_id)
+    admissions_users = session.exec(user_query).all()
+    if not admissions_users:
+        raise HTTPException(status_code=409, detail="Add an active Admissions team member before assigning students")
+
+    workloads = {
+        user.id: session.exec(
+            select(func.count(Student.id)).where(Student.admissions_assignee_id == user.id)
+        ).one()
+        for user in admissions_users
+        if user.id is not None
+    }
+    for student in unassigned:
+        assignee = min(
+            (user for user in admissions_users if user.id is not None),
+            key=lambda user: (workloads[user.id], user.id),
+        )
+        student.admissions_assignee_id = assignee.id
+        workloads[assignee.id] += 1
+        session.add(student)
+    session.commit()
+    return {"ok": True, "assigned": len(unassigned)}
+
+
+@app.patch("/admissions/students/{student_id}/assign")
+def assign_admissions_student(
+    student_id: int,
+    body: AdmissionsAssigneeRequest,
+    session: Session = Depends(get_session),
+):
+    actor = _require_roles(session, ["Admin", "Demo"])
+    student = session.get(Student, student_id)
+    if not student or (
+        student.tenant_id and actor.tenant_id and student.tenant_id != actor.tenant_id
+    ):
+        raise HTTPException(status_code=404, detail="Student not found")
+    assignee = None
+    if body.admissions_assignee_id is not None:
+        assignee = session.get(User, body.admissions_assignee_id)
+        if (
+            not assignee
+            or not assignee.is_active
+            or assignee.role != "Admissions"
+            or (actor.tenant_id and assignee.tenant_id != actor.tenant_id)
+        ):
+            raise HTTPException(status_code=422, detail="Choose an active Admissions team member")
+    student.admissions_assignee_id = assignee.id if assignee else None
+    student.updated_at = datetime.utcnow()
+    session.add(student)
+    session.commit()
+    return {"ok": True, "admissions_assignee_id": student.admissions_assignee_id}
+
+
+@app.post("/admissions/students/{student_id}/invoices")
+def create_admissions_invoice(
+    student_id: int,
+    body: AdmissionsInvoiceCreateRequest,
+    session: Session = Depends(get_session),
+):
+    actor = _require_roles(session, ["Admin", "Admissions", "Demo"])
+    student = session.get(Student, student_id)
+    if not student or (
+        student.tenant_id and actor.tenant_id and student.tenant_id != actor.tenant_id
+    ):
+        raise HTTPException(status_code=404, detail="Student not found")
+    _require_admissions_student_access(actor, student)
+    enrollment = session.get(Enrollment, body.enrollment_id)
+    if not enrollment or enrollment.student_id != student.id:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    existing = session.exec(
+        select(Invoice).where(Invoice.enrollment_id == enrollment.id)
+    ).first()
+    if existing:
+        return {"invoice": _invoice_dict(existing, session)}
+
+    course = session.get(Course, enrollment.course_id)
+    invoice = Invoice(
+        tenant_id=student.tenant_id or actor.tenant_id,
+        invoice_number=_generate_invoice_number(session),
+        student_id=student.id,
+        enrollment_id=enrollment.id,
+        amount=max(0.0, enrollment.total_fee - enrollment.discount),
+        tax=0.0,
+        total=max(0.0, enrollment.total_fee - enrollment.discount),
+        currency="INR",
+        status=(
+            "Paid" if enrollment.amount_due <= 0
+            else "Partial" if enrollment.amount_paid > 0
+            else "Draft"
+        ),
+        paid_at=datetime.utcnow() if enrollment.amount_due <= 0 else None,
+        due_date=body.due_date,
+        notes=body.notes,
+        line_items=[
+            {
+                "description": course.title if course else "Course tuition",
+                "amount": max(0.0, enrollment.total_fee - enrollment.discount),
+            }
+        ],
+    )
+    session.add(invoice)
+    session.commit()
+    session.refresh(invoice)
+    return {"invoice": _invoice_dict(invoice, session)}
+
+
 @app.get("/students")
 def get_students(status: Optional[str] = None, q: Optional[str] = None, session: Session = Depends(get_session)):
-    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Admissions", "Demo"])
     actor_role = _normalize_role(actor.role)
     query = select(Student)
     if actor_role == "Student":
@@ -20455,6 +21114,11 @@ def get_students(status: Optional[str] = None, q: Optional[str] = None, session:
                 Student.assigned_salesperson_id == actor.id,
                 Student.lead_id.in_(select(Lead.id).where(Lead.owner_id == actor.id)),
             )
+        )
+    elif actor_role == "Admissions":
+        query = query.where(
+            Student.admissions_assignee_id == actor.id,
+            Student.tenant_id == actor.tenant_id,
         )
     if status:
         query = query.where(Student.status == status)
@@ -20513,6 +21177,7 @@ def get_students(status: Optional[str] = None, q: Optional[str] = None, session:
             "address": s.address, "gender": s.gender, "qualification": s.qualification,
             "guardian_name": s.guardian_name, "guardian_phone": s.guardian_phone,
             "assigned_salesperson_id": sp_id,
+            "admissions_assignee_id": s.admissions_assignee_id,
             "source": s.source, "status": s.status, "photo_url": s.photo_url,
             "enrollment_count": len(enrollments),
             "active_course": course_title, "active_batch": batch_name,
@@ -20556,7 +21221,7 @@ def create_student(body: StudentCreateRequest, session: Session = Depends(get_se
 
 @app.get("/students/{student_id}")
 def get_student(student_id: int, session: Session = Depends(get_session)):
-    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Demo"])
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Instructor", "Student", "Admissions", "Demo"])
     actor_role = _normalize_role(actor.role)
     student = session.get(Student, student_id)
     if not student or (student.tenant_id and actor_role != "SuperAdmin" and student.tenant_id != actor.tenant_id):
@@ -20824,7 +21489,7 @@ def download_student_file(upload_id: int, session: Session = Depends(get_session
 # -------------------- ENROLLMENT ENDPOINTS --------------------
 @app.get("/enrollments")
 def get_enrollments(batch_id: Optional[int] = None, student_id: Optional[int] = None, course_id: Optional[int] = None, session: Session = Depends(get_session)):
-    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo", "Student"])
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Admissions", "Demo", "Student"])
     actor_role = _normalize_role(actor.role)
     query = select(Enrollment)
     if actor_role == "Student":
@@ -20840,6 +21505,12 @@ def get_enrollments(batch_id: Optional[int] = None, student_id: Optional[int] = 
             )
         )
         query = query.where(Enrollment.student_id.in_(assigned_student_ids))
+    elif actor_role == "Admissions":
+        query = query.where(
+            Enrollment.student_id.in_(
+                select(Student.id).where(Student.admissions_assignee_id == actor.id)
+            )
+        )
     if batch_id:
         query = query.where(Enrollment.batch_id == batch_id)
     if student_id:
@@ -20875,7 +21546,7 @@ def get_enrollments(batch_id: Optional[int] = None, student_id: Optional[int] = 
 
 @app.post("/enrollments")
 def create_enrollment(body: EnrollmentCreateRequest, session: Session = Depends(get_session)):
-    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Admissions", "Demo"])
     import random, string
     student = session.get(Student, body.student_id)
     batch = session.get(Batch, body.batch_id)
@@ -21017,7 +21688,7 @@ def generate_advance_slip(enrollment_id: int, session: Session = Depends(get_ses
 
 @app.post("/payments")
 def add_payment(body: PaymentRecordRequest, session: Session = Depends(get_session)):
-    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Demo"])
+    actor = _require_roles(session, ["Admin", "Employee", "SalesManager", "Sales", "Admissions", "Demo"])
     import random, string
     enrollment = session.get(Enrollment, body.enrollment_id)
     if not enrollment:
@@ -21031,7 +21702,7 @@ def add_payment(body: PaymentRecordRequest, session: Session = Depends(get_sessi
     payment = PaymentRecord(
         enrollment_id=body.enrollment_id, student_id=body.student_id,
         amount=body.amount, payment_mode=body.payment_mode,
-        receipt_number=receipt, notes=body.notes
+        receipt_number=receipt, notes=body.notes, recorded_by=actor.id
     )
     session.add(payment)
     # Update enrollment paid amount
@@ -21040,6 +21711,13 @@ def add_payment(body: PaymentRecordRequest, session: Session = Depends(get_sessi
     enrollment.payment_status = "Paid" if enrollment.amount_due <= 0 else "Partial"
     enrollment.updated_at = datetime.utcnow()
     session.add(enrollment)
+    for invoice in session.exec(
+        select(Invoice).where(Invoice.enrollment_id == enrollment.id)
+    ).all():
+        invoice.status = "Paid" if enrollment.amount_due <= 0 else "Partial"
+        invoice.paid_at = datetime.utcnow() if enrollment.amount_due <= 0 else None
+        invoice.updated_at = datetime.utcnow()
+        session.add(invoice)
     session.commit()
     return {"payment": {"id": payment.id, "amount": payment.amount}, "receipt_number": receipt}
 
